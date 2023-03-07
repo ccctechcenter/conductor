@@ -20,8 +20,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
-import com.netflix.conductor.core.exception.ApplicationException;
+import com.netflix.conductor.core.exception.NonTransientException;
+import com.netflix.conductor.core.exception.TransientException;
+import com.netflix.conductor.core.execution.StartWorkflowInput;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
+import com.netflix.conductor.core.operation.StartWorkflowOperation;
 import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
 
@@ -36,10 +39,12 @@ public class SubWorkflow extends WorkflowSystemTask {
     private static final String SUB_WORKFLOW_ID = "subWorkflowId";
 
     private final ObjectMapper objectMapper;
+    private final StartWorkflowOperation startWorkflowOperation;
 
-    public SubWorkflow(ObjectMapper objectMapper) {
+    public SubWorkflow(ObjectMapper objectMapper, StartWorkflowOperation startWorkflowOperation) {
         super(TASK_TYPE_SUB_WORKFLOW);
         this.objectMapper = objectMapper;
+        this.startWorkflowOperation = startWorkflowOperation;
     }
 
     @SuppressWarnings("unchecked")
@@ -70,32 +75,17 @@ public class SubWorkflow extends WorkflowSystemTask {
         String correlationId = workflow.getCorrelationId();
 
         try {
-            String subWorkflowId;
-            if (workflowDefinition != null) {
-                subWorkflowId =
-                        workflowExecutor.startWorkflow(
-                                workflowDefinition,
-                                wfInput,
-                                null,
-                                correlationId,
-                                0,
-                                workflow.getWorkflowId(),
-                                task.getTaskId(),
-                                null,
-                                taskToDomain);
-            } else {
-                subWorkflowId =
-                        workflowExecutor.startWorkflow(
-                                name,
-                                version,
-                                wfInput,
-                                null,
-                                correlationId,
-                                workflow.getWorkflowId(),
-                                task.getTaskId(),
-                                null,
-                                taskToDomain);
-            }
+            StartWorkflowInput startWorkflowInput = new StartWorkflowInput();
+            startWorkflowInput.setWorkflowDefinition(workflowDefinition);
+            startWorkflowInput.setName(name);
+            startWorkflowInput.setVersion(version);
+            startWorkflowInput.setWorkflowInput(wfInput);
+            startWorkflowInput.setCorrelationId(correlationId);
+            startWorkflowInput.setParentWorkflowId(workflow.getWorkflowId());
+            startWorkflowInput.setParentWorkflowTaskId(task.getTaskId());
+            startWorkflowInput.setTaskToDomain(taskToDomain);
+
+            String subWorkflowId = startWorkflowOperation.execute(startWorkflowInput);
 
             task.setSubWorkflowId(subWorkflowId);
             // For backwards compatibility
@@ -105,30 +95,21 @@ public class SubWorkflow extends WorkflowSystemTask {
             // recursion by the time we update here.
             WorkflowModel subWorkflow = workflowExecutor.getWorkflow(subWorkflowId, false);
             updateTaskStatus(subWorkflow, task);
-        } catch (ApplicationException ae) {
-            if (ae.isRetryable()) {
-                LOGGER.info(
-                        "A transient backend error happened when task {} in {} tried to start sub workflow {}.",
-                        task.getTaskId(),
-                        workflow.toShortString(),
-                        name);
-            } else {
-                task.setStatus(TaskModel.Status.FAILED);
-                task.setReasonForIncompletion(ae.getMessage());
-                LOGGER.error(
-                        "Error starting sub workflow: {} from workflow: {}",
-                        name,
-                        workflow.toShortString(),
-                        ae);
-            }
-        } catch (Exception e) {
+        } catch (TransientException te) {
+            LOGGER.info(
+                    "A transient backend error happened when task {} in {} tried to start sub workflow {}.",
+                    task.getTaskId(),
+                    workflow.toShortString(),
+                    name);
+        } catch (Exception ae) {
+
             task.setStatus(TaskModel.Status.FAILED);
-            task.setReasonForIncompletion(e.getMessage());
+            task.setReasonForIncompletion(ae.getMessage());
             LOGGER.error(
                     "Error starting sub workflow: {} from workflow: {}",
                     name,
                     workflow.toShortString(),
-                    e);
+                    ae);
         }
     }
 
@@ -204,8 +185,7 @@ public class SubWorkflow extends WorkflowSystemTask {
                 task.setStatus(TaskModel.Status.TIMED_OUT);
                 break;
             default:
-                throw new ApplicationException(
-                        ApplicationException.Code.INTERNAL_ERROR,
+                throw new NonTransientException(
                         "Subworkflow status does not conform to relevant task status.");
         }
 
@@ -214,7 +194,7 @@ public class SubWorkflow extends WorkflowSystemTask {
                 task.setExternalOutputPayloadStoragePath(
                         subworkflow.getExternalOutputPayloadStoragePath());
             } else {
-                task.getOutputData().putAll(subworkflow.getOutput());
+                task.addOutput(subworkflow.getOutput());
             }
             if (!status.isSuccessful()) {
                 task.setReasonForIncompletion(
@@ -224,5 +204,15 @@ public class SubWorkflow extends WorkflowSystemTask {
                                 subworkflow.getReasonForIncompletion()));
             }
         }
+    }
+
+    /**
+     * We don't need the tasks when retrieving the workflow data.
+     *
+     * @return false
+     */
+    @Override
+    public boolean isTaskRetrievalRequired() {
+        return false;
     }
 }

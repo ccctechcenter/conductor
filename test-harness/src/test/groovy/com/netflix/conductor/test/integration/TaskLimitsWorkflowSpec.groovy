@@ -45,8 +45,8 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
 
     def "Verify that the rate limiting for system tasks is honored"() {
         when: "Start a workflow that has a rate limited system task in it"
-        def workflowInstanceId = workflowExecutor.startWorkflow(RATE_LIMITED_SYSTEM_TASK_WORKFLOW, 1,
-                '', [:], null, null, null)
+        def workflowInstanceId = startWorkflow(RATE_LIMITED_SYSTEM_TASK_WORKFLOW, 1,
+                '', [:], null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -69,8 +69,8 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
         }
 
         when: "A new instance of the workflow is started"
-        def workflowTwoInstanceId = workflowExecutor.startWorkflow(RATE_LIMITED_SYSTEM_TASK_WORKFLOW, 1,
-                '', [:], null, null, null)
+        def workflowTwoInstanceId = startWorkflow(RATE_LIMITED_SYSTEM_TASK_WORKFLOW, 1,
+                '', [:], null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowTwoInstanceId, true)) {
@@ -95,8 +95,7 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
 
     def "Verify that the rate limiting for simple tasks is honored"() {
         when: "Start a workflow that has a rate limited simple task in it"
-        def workflowInstanceId = workflowExecutor.startWorkflow(RATE_LIMITED_SIMPLE_TASK_WORKFLOW, 1, '', [:], null,
-                null, null)
+        def workflowInstanceId = startWorkflow(RATE_LIMITED_SIMPLE_TASK_WORKFLOW, 1, '', [:], null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -121,8 +120,8 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
         }
 
         when: "A new instance of the workflow is started"
-        def workflowTwoInstanceId = workflowExecutor.startWorkflow(RATE_LIMITED_SIMPLE_TASK_WORKFLOW, 1,
-                '', [:], null, null, null)
+        def workflowTwoInstanceId = startWorkflow(RATE_LIMITED_SIMPLE_TASK_WORKFLOW, 1,
+                '', [:], null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowTwoInstanceId, true)) {
@@ -162,8 +161,8 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
 
     def "Verify that concurrency limited tasks are honored during workflow execution"() {
         when: "Start a workflow that has a concurrency execution limited task in it"
-        def workflowInstanceId = workflowExecutor.startWorkflow(CONCURRENCY_EXECUTION_LIMITED_WORKFLOW, 1,
-                '', [:], null, null, null)
+        def workflowInstanceId = startWorkflow(CONCURRENCY_EXECUTION_LIMITED_WORKFLOW, 1,
+                '', [:], null)
 
 
         then: "verify that the workflow is in a running state"
@@ -176,16 +175,14 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
 
         when: "The task is polled and acknowledged"
         def polledTask1 = workflowExecutionService.poll('test_task_with_concurrency_limit', 'test_task_worker')
-        def ackPolledTask1 = workflowExecutionService.ackTaskReceived(polledTask1.taskId)
 
         then: "Verify that the task was polled and acknowledged"
         polledTask1.taskType == 'test_task_with_concurrency_limit'
         polledTask1.workflowInstanceId == workflowInstanceId
-        ackPolledTask1
 
         when: "A additional workflow that has a concurrency execution limited task in it"
-        def workflowTwoInstanceId = workflowExecutor.startWorkflow(CONCURRENCY_EXECUTION_LIMITED_WORKFLOW, 1,
-                '', [:], null, null, null)
+        def workflowTwoInstanceId = startWorkflow(CONCURRENCY_EXECUTION_LIMITED_WORKFLOW, 1,
+                '', [:], null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowTwoInstanceId, true)) {
@@ -219,11 +216,9 @@ class TaskLimitsWorkflowSpec extends AbstractSpecification {
 
         and: "The task is polled again and acknowledged"
         def polledTaskTry2 = workflowExecutionService.poll('test_task_with_concurrency_limit', 'test_task_worker')
-        def ackPolledTaskTry2 = workflowExecutionService.ackTaskReceived(polledTaskTry2.taskId)
 
         then: "Verify that the task is returned since there are no tasks in progress"
         polledTaskTry2.taskType == 'test_task_with_concurrency_limit'
         polledTaskTry2.workflowInstanceId == workflowTwoInstanceId
-        ackPolledTaskTry2
     }
 }

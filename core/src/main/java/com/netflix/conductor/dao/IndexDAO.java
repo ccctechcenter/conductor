@@ -66,14 +66,36 @@ public interface IndexDAO {
             String query, String freeText, int start, int count, List<String> sort);
 
     /**
+     * @param query SQL like query for workflow search parameters.
+     * @param freeText Additional query in free text. Lucene syntax
+     * @param start start start index for pagination
+     * @param count count # of workflow ids to be returned
+     * @param sort sort options
+     * @return List of workflows for the matching query
+     */
+    SearchResult<WorkflowSummary> searchWorkflowSummary(
+            String query, String freeText, int start, int count, List<String> sort);
+
+    /**
      * @param query SQL like query for task search parameters.
      * @param freeText Additional query in free text. Lucene syntax
      * @param start start start index for pagination
      * @param count count # of task ids to be returned
      * @param sort sort options
-     * @return List of workflow ids for the matching query
+     * @return List of task ids for the matching query
      */
     SearchResult<String> searchTasks(
+            String query, String freeText, int start, int count, List<String> sort);
+
+    /**
+     * @param query SQL like query for task search parameters.
+     * @param freeText Additional query in free text. Lucene syntax
+     * @param start start start index for pagination
+     * @param count count # of task ids to be returned
+     * @param sort sort options
+     * @return List of tasks for the matching query
+     */
+    SearchResult<TaskSummary> searchTaskSummary(
             String query, String freeText, int start, int count, List<String> sort);
 
     /**
@@ -110,6 +132,45 @@ public interface IndexDAO {
      */
     CompletableFuture<Void> asyncUpdateWorkflow(
             String workflowInstanceId, String[] keys, Object[] values);
+
+    /**
+     * Remove the task index
+     *
+     * @param workflowId workflow containing task
+     * @param taskId task to be removed
+     */
+    void removeTask(String workflowId, String taskId);
+
+    /**
+     * Remove the task index asynchronously
+     *
+     * @param workflowId workflow containing task
+     * @param taskId task to be removed
+     * @return CompletableFuture of type void
+     */
+    CompletableFuture<Void> asyncRemoveTask(String workflowId, String taskId);
+
+    /**
+     * Updates the index
+     *
+     * @param workflowId id of the workflow
+     * @param taskId id of the task
+     * @param keys keys to be updated
+     * @param values values. Number of keys and values MUST match.
+     */
+    void updateTask(String workflowId, String taskId, String[] keys, Object[] values);
+
+    /**
+     * Updates the index
+     *
+     * @param workflowId id of the workflow
+     * @param taskId id of the task
+     * @param keys keys to be updated
+     * @param values values. Number of keys and values MUST match.
+     * @return CompletableFuture of type void
+     */
+    CompletableFuture<Void> asyncUpdateTask(
+            String workflowId, String taskId, String[] keys, Object[] values);
 
     /**
      * Retrieves a specific field from the index

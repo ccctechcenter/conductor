@@ -12,11 +12,7 @@
  */
 package com.netflix.conductor.core.events;
 
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
@@ -29,7 +25,9 @@ import com.netflix.conductor.common.metadata.events.EventHandler.StartWorkflow;
 import com.netflix.conductor.common.metadata.events.EventHandler.TaskDetails;
 import com.netflix.conductor.common.metadata.tasks.TaskResult;
 import com.netflix.conductor.common.utils.TaskUtils;
+import com.netflix.conductor.core.execution.StartWorkflowInput;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
+import com.netflix.conductor.core.operation.StartWorkflowOperation;
 import com.netflix.conductor.core.utils.JsonUtils;
 import com.netflix.conductor.core.utils.ParametersUtils;
 import com.netflix.conductor.metrics.Monitors;
@@ -48,14 +46,17 @@ public class SimpleActionProcessor implements ActionProcessor {
     private final WorkflowExecutor workflowExecutor;
     private final ParametersUtils parametersUtils;
     private final JsonUtils jsonUtils;
+    private final StartWorkflowOperation startWorkflowOperation;
 
     public SimpleActionProcessor(
             WorkflowExecutor workflowExecutor,
             ParametersUtils parametersUtils,
-            JsonUtils jsonUtils) {
+            JsonUtils jsonUtils,
+            StartWorkflowOperation startWorkflowOperation) {
         this.workflowExecutor = workflowExecutor;
         this.parametersUtils = parametersUtils;
         this.jsonUtils = jsonUtils;
+        this.startWorkflowOperation = startWorkflowOperation;
     }
 
     public Map<String, Object> execute(
@@ -161,8 +162,8 @@ public class SimpleActionProcessor implements ActionProcessor {
         taskModel.setStatus(status);
         taskModel.setOutputData(replaced);
         taskModel.setOutputMessage(taskDetails.getOutputMessage());
-        taskModel.getOutputData().put("conductor.event.messageId", messageId);
-        taskModel.getOutputData().put("conductor.event.name", event);
+        taskModel.addOutput("conductor.event.messageId", messageId);
+        taskModel.addOutput("conductor.event.name", event);
 
         try {
             workflowExecutor.updateTask(new TaskResult(taskModel.toTask()));
@@ -206,17 +207,19 @@ public class SimpleActionProcessor implements ActionProcessor {
             workflowInput.put("conductor.event.messageId", messageId);
             workflowInput.put("conductor.event.name", event);
 
-            String workflowId =
-                    workflowExecutor.startWorkflow(
-                            params.getName(),
-                            params.getVersion(),
-                            Optional.ofNullable(replaced.get("correlationId"))
-                                    .map(Object::toString)
-                                    .orElse(params.getCorrelationId()),
-                            workflowInput,
-                            null,
-                            event,
-                            params.getTaskToDomain());
+            StartWorkflowInput startWorkflowInput = new StartWorkflowInput();
+            startWorkflowInput.setName(params.getName());
+            startWorkflowInput.setVersion(params.getVersion());
+            startWorkflowInput.setCorrelationId(
+                    Optional.ofNullable(replaced.get("correlationId"))
+                            .map(Object::toString)
+                            .orElse(params.getCorrelationId()));
+            startWorkflowInput.setWorkflowInput(workflowInput);
+            startWorkflowInput.setEvent(event);
+            startWorkflowInput.setTaskToDomain(params.getTaskToDomain());
+
+            String workflowId = startWorkflowOperation.execute(startWorkflowInput);
+
             output.put("workflowId", workflowId);
             LOGGER.debug(
                     "Started workflow: {}/{}/{} for event: {} for message:{}",

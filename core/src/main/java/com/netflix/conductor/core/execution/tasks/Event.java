@@ -20,10 +20,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import com.netflix.conductor.annotations.VisibleForTesting;
 import com.netflix.conductor.core.events.EventQueues;
 import com.netflix.conductor.core.events.queue.Message;
 import com.netflix.conductor.core.events.queue.ObservableQueue;
-import com.netflix.conductor.core.exception.ApplicationException;
+import com.netflix.conductor.core.exception.NonTransientException;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
 import com.netflix.conductor.core.utils.ParametersUtils;
 import com.netflix.conductor.model.TaskModel;
@@ -31,7 +32,6 @@ import com.netflix.conductor.model.WorkflowModel;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.annotations.VisibleForTesting;
 
 import static com.netflix.conductor.common.metadata.tasks.TaskType.TASK_TYPE_EVENT;
 
@@ -40,6 +40,8 @@ public class Event extends WorkflowSystemTask {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Event.class);
     public static final String NAME = "EVENT";
+
+    private static final String EVENT_PRODUCED = "event_produced";
 
     private final ObjectMapper objectMapper;
     private final ParametersUtils parametersUtils;
@@ -61,30 +63,34 @@ public class Event extends WorkflowSystemTask {
         payload.put("workflowVersion", workflow.getWorkflowVersion());
         payload.put("correlationId", workflow.getCorrelationId());
 
+        task.setStatus(TaskModel.Status.IN_PROGRESS);
+        task.addOutput(payload);
+
         try {
-            String payloadJson = objectMapper.writeValueAsString(payload);
-            Message message = new Message(task.getTaskId(), payloadJson, task.getTaskId());
-            ObservableQueue queue = getQueue(workflow, task);
+            task.addOutput(EVENT_PRODUCED, computeQueueName(workflow, task));
+        } catch (Exception e) {
+            task.setStatus(TaskModel.Status.FAILED);
+            task.setReasonForIncompletion(e.getMessage());
+            LOGGER.error(
+                    "Error executing task: {}, workflow: {}",
+                    task.getTaskId(),
+                    workflow.getWorkflowId(),
+                    e);
+        }
+    }
+
+    @Override
+    public boolean execute(
+            WorkflowModel workflow, TaskModel task, WorkflowExecutor workflowExecutor) {
+        try {
+            String queueName = (String) task.getOutputData().get(EVENT_PRODUCED);
+            ObservableQueue queue = getQueue(queueName, task.getTaskId());
+            Message message = getPopulatedMessage(task);
             queue.publish(List.of(message));
             LOGGER.debug("Published message:{} to queue:{}", message.getId(), queue.getName());
-            task.getOutputData().putAll(payload);
-            task.setStatus(
-                    isAsyncComplete(task)
-                            ? TaskModel.Status.IN_PROGRESS
-                            : TaskModel.Status.COMPLETED);
-        } catch (ApplicationException ae) {
-            if (ae.isRetryable()) {
-                LOGGER.info(
-                        "A transient backend error happened when task {} tried to publish an event.",
-                        task.getTaskId());
-            } else {
-                task.setStatus(TaskModel.Status.FAILED);
-                task.setReasonForIncompletion(ae.getMessage());
-                LOGGER.error(
-                        "Error executing task: {}, workflow: {}",
-                        task.getTaskId(),
-                        workflow.getWorkflowId(),
-                        ae);
+            if (!isAsyncComplete(task)) {
+                task.setStatus(TaskModel.Status.COMPLETED);
+                return true;
             }
         } catch (JsonProcessingException jpe) {
             task.setStatus(TaskModel.Status.FAILED);
@@ -102,22 +108,19 @@ public class Event extends WorkflowSystemTask {
                     workflow.getWorkflowId(),
                     e);
         }
+        return false;
     }
 
     @Override
     public void cancel(WorkflowModel workflow, TaskModel task, WorkflowExecutor workflowExecutor) {
         Message message = new Message(task.getTaskId(), null, task.getTaskId());
-        ObservableQueue queue = getQueue(workflow, task);
+        String queueName = computeQueueName(workflow, task);
+        ObservableQueue queue = getQueue(queueName, task.getTaskId());
         queue.ack(List.of(message));
     }
 
-    @Override
-    public boolean isAsync() {
-        return false;
-    }
-
     @VisibleForTesting
-    ObservableQueue getQueue(WorkflowModel workflow, TaskModel task) {
+    String computeQueueName(WorkflowModel workflow, TaskModel task) {
         String sinkValueRaw = (String) task.getInputData().get("sink");
         Map<String, Object> input = new HashMap<>();
         input.put("sink", sinkValueRaw);
@@ -145,19 +148,28 @@ public class Event extends WorkflowSystemTask {
                         "Invalid / Unsupported sink specified: " + sinkValue);
             }
         }
+        return queueName;
+    }
 
-        task.getOutputData().put("event_produced", queueName);
-
+    @VisibleForTesting
+    ObservableQueue getQueue(String queueName, String taskId) {
         try {
             return eventQueues.getQueue(queueName);
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException(
-                    "Error loading queue for name:"
+                    "Error loading queue:"
                             + queueName
-                            + ", sink:"
-                            + sinkValue
+                            + ", for task:"
+                            + taskId
                             + ", error: "
                             + e.getMessage());
+        } catch (Exception e) {
+            throw new NonTransientException("Unable to find queue name for task " + taskId);
         }
+    }
+
+    Message getPopulatedMessage(TaskModel task) throws JsonProcessingException {
+        String payloadJson = objectMapper.writeValueAsString(task.getOutputData());
+        return new Message(task.getTaskId(), payloadJson, task.getTaskId());
     }
 }

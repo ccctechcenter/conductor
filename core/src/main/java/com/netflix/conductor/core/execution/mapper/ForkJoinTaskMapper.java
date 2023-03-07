@@ -38,8 +38,8 @@ public class ForkJoinTaskMapper implements TaskMapper {
     public static final Logger LOGGER = LoggerFactory.getLogger(ForkJoinTaskMapper.class);
 
     @Override
-    public TaskType getTaskType() {
-        return TaskType.FORK_JOIN;
+    public String getTaskType() {
+        return TaskType.FORK_JOIN.name();
     }
 
     /**
@@ -99,6 +99,12 @@ public class ForkJoinTaskMapper implements TaskMapper {
             throw new TerminateWorkflowException(
                     "Fork task definition is not followed by a join task.  Check the blueprint");
         }
+        List<TaskModel> joinTask =
+                taskMapperContext
+                        .getDeciderService()
+                        .getTasksToBeScheduled(workflowModel, joinWorkflowTask, retryCount);
+
+        tasksToBeScheduled.addAll(joinTask);
         return tasksToBeScheduled;
     }
 }

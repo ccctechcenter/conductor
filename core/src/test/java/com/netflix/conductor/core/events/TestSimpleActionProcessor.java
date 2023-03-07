@@ -31,7 +31,9 @@ import com.netflix.conductor.common.metadata.events.EventHandler.TaskDetails;
 import com.netflix.conductor.common.metadata.tasks.TaskResult;
 import com.netflix.conductor.common.metadata.tasks.TaskResult.Status;
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
+import com.netflix.conductor.core.execution.StartWorkflowInput;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
+import com.netflix.conductor.core.operation.StartWorkflowOperation;
 import com.netflix.conductor.core.utils.ExternalPayloadStorageUtils;
 import com.netflix.conductor.core.utils.JsonUtils;
 import com.netflix.conductor.core.utils.ParametersUtils;
@@ -40,18 +42,9 @@ import com.netflix.conductor.model.WorkflowModel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @ContextConfiguration(classes = {TestObjectMapperConfiguration.class})
 @RunWith(SpringRunner.class)
@@ -60,6 +53,7 @@ public class TestSimpleActionProcessor {
     private WorkflowExecutor workflowExecutor;
     private ExternalPayloadStorageUtils externalPayloadStorageUtils;
     private SimpleActionProcessor actionProcessor;
+    private StartWorkflowOperation startWorkflowOperation;
 
     @Autowired private ObjectMapper objectMapper;
 
@@ -68,12 +62,14 @@ public class TestSimpleActionProcessor {
         externalPayloadStorageUtils = mock(ExternalPayloadStorageUtils.class);
 
         workflowExecutor = mock(WorkflowExecutor.class);
+        startWorkflowOperation = mock(StartWorkflowOperation.class);
 
         actionProcessor =
                 new SimpleActionProcessor(
                         workflowExecutor,
                         new ParametersUtils(objectMapper),
-                        new JsonUtils(objectMapper));
+                        new JsonUtils(objectMapper),
+                        startWorkflowOperation);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -100,15 +96,7 @@ public class TestSimpleActionProcessor {
         workflowDef.setName("testWorkflow");
         workflowDef.setVersion(1);
 
-        when(workflowExecutor.startWorkflow(
-                        eq("testWorkflow"),
-                        eq(null),
-                        any(),
-                        any(),
-                        any(),
-                        eq("testEvent"),
-                        anyMap()))
-                .thenReturn("workflow_1");
+        when(startWorkflowOperation.execute(any())).thenReturn("workflow_1");
 
         Map<String, Object> output =
                 actionProcessor.execute(action, payload, "testEvent", "testMessage");
@@ -116,23 +104,18 @@ public class TestSimpleActionProcessor {
         assertNotNull(output);
         assertEquals("workflow_1", output.get("workflowId"));
 
-        ArgumentCaptor<String> correlationIdCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Map> inputParamCaptor = ArgumentCaptor.forClass(Map.class);
-        ArgumentCaptor<Map> taskToDomainCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(workflowExecutor)
-                .startWorkflow(
-                        eq("testWorkflow"),
-                        eq(null),
-                        correlationIdCaptor.capture(),
-                        inputParamCaptor.capture(),
-                        any(),
-                        eq("testEvent"),
-                        taskToDomainCaptor.capture());
-        assertEquals("test_1", inputParamCaptor.getValue().get("testInput"));
-        assertEquals("test-id", correlationIdCaptor.getValue());
-        assertEquals("testMessage", inputParamCaptor.getValue().get("conductor.event.messageId"));
-        assertEquals("testEvent", inputParamCaptor.getValue().get("conductor.event.name"));
-        assertEquals(taskToDomain, taskToDomainCaptor.getValue());
+        ArgumentCaptor<StartWorkflowInput> startWorkflowInputArgumentCaptor =
+                ArgumentCaptor.forClass(StartWorkflowInput.class);
+
+        verify(startWorkflowOperation).execute(startWorkflowInputArgumentCaptor.capture());
+        StartWorkflowInput capturedValue = startWorkflowInputArgumentCaptor.getValue();
+
+        assertEquals("test_1", capturedValue.getWorkflowInput().get("testInput"));
+        assertEquals("test-id", capturedValue.getCorrelationId());
+        assertEquals(
+                "testMessage", capturedValue.getWorkflowInput().get("conductor.event.messageId"));
+        assertEquals("testEvent", capturedValue.getWorkflowInput().get("conductor.event.name"));
+        assertEquals(taskToDomain, capturedValue.getTaskToDomain());
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -156,15 +139,7 @@ public class TestSimpleActionProcessor {
         workflowDef.setName("testWorkflow");
         workflowDef.setVersion(1);
 
-        when(workflowExecutor.startWorkflow(
-                        eq("testWorkflow"),
-                        eq(null),
-                        any(),
-                        any(),
-                        any(),
-                        eq("testEvent"),
-                        anyMap()))
-                .thenReturn("workflow_1");
+        when(startWorkflowOperation.execute(any())).thenReturn("workflow_1");
 
         Map<String, Object> output =
                 actionProcessor.execute(action, payload, "testEvent", "testMessage");
@@ -172,23 +147,18 @@ public class TestSimpleActionProcessor {
         assertNotNull(output);
         assertEquals("workflow_1", output.get("workflowId"));
 
-        ArgumentCaptor<String> correlationIdCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Map> inputParamCaptor = ArgumentCaptor.forClass(Map.class);
-        ArgumentCaptor<Map> taskToDomainCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(workflowExecutor)
-                .startWorkflow(
-                        eq("testWorkflow"),
-                        eq(null),
-                        correlationIdCaptor.capture(),
-                        inputParamCaptor.capture(),
-                        any(),
-                        eq("testEvent"),
-                        taskToDomainCaptor.capture());
-        assertEquals("test_1", inputParamCaptor.getValue().get("testInput"));
-        assertNull(correlationIdCaptor.getValue());
-        assertEquals("testMessage", inputParamCaptor.getValue().get("conductor.event.messageId"));
-        assertEquals("testEvent", inputParamCaptor.getValue().get("conductor.event.name"));
-        assertEquals(taskToDomain, taskToDomainCaptor.getValue());
+        ArgumentCaptor<StartWorkflowInput> startWorkflowInputArgumentCaptor =
+                ArgumentCaptor.forClass(StartWorkflowInput.class);
+
+        verify(startWorkflowOperation).execute(startWorkflowInputArgumentCaptor.capture());
+        StartWorkflowInput capturedArgument = startWorkflowInputArgumentCaptor.getValue();
+        assertEquals("test_1", capturedArgument.getWorkflowInput().get("testInput"));
+        assertNull(capturedArgument.getCorrelationId());
+        assertEquals(
+                "testMessage",
+                capturedArgument.getWorkflowInput().get("conductor.event.messageId"));
+        assertEquals("testEvent", capturedArgument.getWorkflowInput().get("conductor.event.name"));
+        assertEquals(taskToDomain, capturedArgument.getTaskToDomain());
     }
 
     @Test

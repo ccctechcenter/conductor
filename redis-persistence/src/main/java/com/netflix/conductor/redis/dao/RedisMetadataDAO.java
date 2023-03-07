@@ -32,8 +32,8 @@ import org.springframework.stereotype.Component;
 import com.netflix.conductor.common.metadata.tasks.TaskDef;
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
 import com.netflix.conductor.core.config.ConductorProperties;
-import com.netflix.conductor.core.exception.ApplicationException;
-import com.netflix.conductor.core.exception.ApplicationException.Code;
+import com.netflix.conductor.core.exception.ConflictException;
+import com.netflix.conductor.core.exception.NotFoundException;
 import com.netflix.conductor.dao.MetadataDAO;
 import com.netflix.conductor.metrics.Monitors;
 import com.netflix.conductor.redis.config.AnyRedisCondition;
@@ -42,6 +42,8 @@ import com.netflix.conductor.redis.jedis.JedisProxy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Preconditions;
+
+import static com.netflix.conductor.common.metadata.tasks.TaskDef.ONE_HOUR;
 
 @Component
 @Conditional(AnyRedisCondition.class)
@@ -74,23 +76,23 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
     }
 
     @Override
-    public void createTaskDef(TaskDef taskDef) {
-        insertOrUpdateTaskDef(taskDef);
-    }
-
-    @Override
-    public String updateTaskDef(TaskDef taskDef) {
+    public TaskDef createTaskDef(TaskDef taskDef) {
         return insertOrUpdateTaskDef(taskDef);
     }
 
-    private String insertOrUpdateTaskDef(TaskDef taskDef) {
+    @Override
+    public TaskDef updateTaskDef(TaskDef taskDef) {
+        return insertOrUpdateTaskDef(taskDef);
+    }
+
+    private TaskDef insertOrUpdateTaskDef(TaskDef taskDef) {
         // Store all task def in under one key
         String payload = toJson(taskDef);
         jedisProxy.hset(nsKey(ALL_TASK_DEFS), taskDef.getName(), payload);
         recordRedisDaoRequests("storeTaskDef");
         recordRedisDaoPayloadSize("storeTaskDef", payload.length(), taskDef.getName(), "n/a");
         refreshTaskDefs();
-        return taskDef.getName();
+        return taskDef;
     }
 
     private void refreshTaskDefs() {
@@ -121,7 +123,15 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
             recordRedisDaoPayloadSize(
                     "getTaskDef", taskDefJsonStr.length(), taskDef.getName(), "n/a");
         }
+        setDefaults(taskDef);
         return taskDef;
+    }
+
+    private void setDefaults(TaskDef taskDef) {
+        if (taskDef != null && taskDef.getResponseTimeoutSeconds() == 0) {
+            taskDef.setResponseTimeoutSeconds(
+                    taskDef.getTimeoutSeconds() == 0 ? ONE_HOUR : taskDef.getTimeoutSeconds() - 1);
+        }
     }
 
     @Override
@@ -134,7 +144,9 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
         if (taskDefs.size() > 0) {
             for (String taskDefJsonStr : taskDefs.values()) {
                 if (taskDefJsonStr != null) {
-                    allTaskDefs.add(readValue(taskDefJsonStr, TaskDef.class));
+                    TaskDef taskDef = readValue(taskDefJsonStr, TaskDef.class);
+                    setDefaults(taskDef);
+                    allTaskDefs.add(taskDef);
                     size += taskDefJsonStr.length();
                 }
             }
@@ -149,8 +161,7 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
         Preconditions.checkNotNull(name, "TaskDef name cannot be null");
         Long result = jedisProxy.hdel(nsKey(ALL_TASK_DEFS), name);
         if (!result.equals(1L)) {
-            throw new ApplicationException(
-                    Code.NOT_FOUND, "Cannot remove the task - no such task definition");
+            throw new NotFoundException("Cannot remove the task - no such task definition");
         }
         recordRedisDaoRequests("removeTaskDef");
         refreshTaskDefs();
@@ -160,8 +171,7 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
     public void createWorkflowDef(WorkflowDef def) {
         if (jedisProxy.hexists(
                 nsKey(WORKFLOW_DEF, def.getName()), String.valueOf(def.getVersion()))) {
-            throw new ApplicationException(
-                    Code.CONFLICT, "Workflow with " + def.key() + " already exists!");
+            throw new ConflictException("Workflow with %s already exists!", def.key());
         }
         _createOrUpdate(def);
     }
@@ -244,12 +254,9 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
         Preconditions.checkNotNull(version, "Input version cannot be null");
         Long result = jedisProxy.hdel(nsKey(WORKFLOW_DEF, name), String.valueOf(version));
         if (!result.equals(1L)) {
-            throw new ApplicationException(
-                    Code.NOT_FOUND,
-                    String.format(
-                            "Cannot remove the workflow - no such workflow"
-                                    + " definition: %s version: %d",
-                            name, version));
+            throw new NotFoundException(
+                    "Cannot remove the workflow - no such workflow" + " definition: %s version: %d",
+                    name, version);
         }
 
         // check if there are any more versions remaining if not delete the
@@ -257,7 +264,7 @@ public class RedisMetadataDAO extends BaseDynoDAO implements MetadataDAO {
         Optional<Integer> optionMaxVersion = getWorkflowMaxVersion(name);
 
         // delete workflow name
-        if (!optionMaxVersion.isPresent()) {
+        if (optionMaxVersion.isEmpty()) {
             jedisProxy.srem(nsKey(WORKFLOW_DEF_NAMES), name);
         }
 

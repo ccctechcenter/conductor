@@ -12,13 +12,7 @@
  */
 package com.netflix.conductor.common.run;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import javax.validation.constraints.Max;
@@ -32,8 +26,6 @@ import com.netflix.conductor.annotations.protogen.ProtoMessage;
 import com.netflix.conductor.common.metadata.Auditable;
 import com.netflix.conductor.common.metadata.tasks.Task;
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
-
-import com.google.common.base.Preconditions;
 
 @ProtoMessage
 public class Workflow extends Auditable {
@@ -130,6 +122,9 @@ public class Workflow extends Auditable {
 
     @ProtoField(id = 24)
     private long lastRetriedTime;
+
+    @ProtoField(id = 25)
+    private Set<String> failedTaskNames = new HashSet<>();
 
     public Workflow() {}
 
@@ -331,6 +326,14 @@ public class Workflow extends Auditable {
         this.failedReferenceTaskNames = failedReferenceTaskNames;
     }
 
+    public Set<String> getFailedTaskNames() {
+        return failedTaskNames;
+    }
+
+    public void setFailedTaskNames(Set<String> failedTaskNames) {
+        this.failedTaskNames = failedTaskNames;
+    }
+
     public WorkflowDef getWorkflowDefinition() {
         return workflowDefinition;
     }
@@ -384,7 +387,9 @@ public class Workflow extends Auditable {
      * @return the workflow definition name.
      */
     public String getWorkflowName() {
-        Preconditions.checkNotNull(workflowDefinition, "Workflow definition is null");
+        if (workflowDefinition == null) {
+            throw new NullPointerException("Workflow definition is null");
+        }
         return workflowDefinition.getName();
     }
 
@@ -394,7 +399,9 @@ public class Workflow extends Auditable {
      * @return the workflow definition version.
      */
     public int getWorkflowVersion() {
-        Preconditions.checkNotNull(workflowDefinition, "Workflow definition is null");
+        if (workflowDefinition == null) {
+            throw new NullPointerException("Workflow definition is null");
+        }
         return workflowDefinition.getVersion();
     }
 
@@ -488,6 +495,7 @@ public class Workflow extends Auditable {
         copy.setLastRetriedTime(lastRetriedTime);
         copy.setTaskToDomain(taskToDomain);
         copy.setFailedReferenceTaskNames(failedReferenceTaskNames);
+        copy.setFailedTaskNames(failedTaskNames);
         copy.setExternalInputPayloadStoragePath(externalInputPayloadStoragePath);
         copy.setExternalOutputPayloadStoragePath(externalOutputPayloadStoragePath);
         return copy;
@@ -536,6 +544,7 @@ public class Workflow extends Auditable {
                 && Objects.equals(getTaskToDomain(), workflow.getTaskToDomain())
                 && Objects.equals(
                         getFailedReferenceTaskNames(), workflow.getFailedReferenceTaskNames())
+                && Objects.equals(getFailedTaskNames(), workflow.getFailedTaskNames())
                 && Objects.equals(
                         getExternalInputPayloadStoragePath(),
                         workflow.getExternalInputPayloadStoragePath())
@@ -567,6 +576,7 @@ public class Workflow extends Auditable {
                 getEvent(),
                 getTaskToDomain(),
                 getFailedReferenceTaskNames(),
+                getFailedTaskNames(),
                 getWorkflowDefinition(),
                 getExternalInputPayloadStoragePath(),
                 getExternalOutputPayloadStoragePath(),

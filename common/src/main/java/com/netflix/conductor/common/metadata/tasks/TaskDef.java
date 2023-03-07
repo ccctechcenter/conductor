@@ -20,6 +20,7 @@ import java.util.Objects;
 
 import javax.validation.Valid;
 import javax.validation.constraints.Email;
+import javax.validation.constraints.Max;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
@@ -29,12 +30,12 @@ import com.netflix.conductor.annotations.protogen.ProtoField;
 import com.netflix.conductor.annotations.protogen.ProtoMessage;
 import com.netflix.conductor.common.constraints.OwnerEmailMandatoryConstraint;
 import com.netflix.conductor.common.constraints.TaskTimeoutConstraint;
-import com.netflix.conductor.common.metadata.Auditable;
+import com.netflix.conductor.common.metadata.BaseDef;
 
 @ProtoMessage
 @TaskTimeoutConstraint
 @Valid
-public class TaskDef extends Auditable {
+public class TaskDef extends BaseDef {
 
     @ProtoEnum
     public enum TimeoutPolicy {
@@ -50,7 +51,7 @@ public class TaskDef extends Auditable {
         LINEAR_BACKOFF
     }
 
-    private static final int ONE_HOUR = 60 * 60;
+    public static final int ONE_HOUR = 60 * 60;
 
     /** Unique name identifying the task. The name is unique across */
     @NotEmpty(message = "TaskDef name cannot be null or empty")
@@ -62,6 +63,7 @@ public class TaskDef extends Auditable {
 
     @ProtoField(id = 3)
     @Min(value = 0, message = "TaskDef retryCount: {value} must be >= 0")
+    @Max(value = 10, message = "TaskDef retryCount: {value} must be <=10")
     private int retryCount = 3; // Default
 
     @ProtoField(id = 4)

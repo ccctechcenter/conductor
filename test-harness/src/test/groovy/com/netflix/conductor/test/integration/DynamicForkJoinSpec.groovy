@@ -18,8 +18,11 @@ import com.netflix.conductor.common.metadata.tasks.Task
 import com.netflix.conductor.common.metadata.tasks.TaskDef
 import com.netflix.conductor.common.metadata.tasks.TaskType
 import com.netflix.conductor.common.metadata.workflow.SubWorkflowParams
+import com.netflix.conductor.common.metadata.workflow.WorkflowDef
 import com.netflix.conductor.common.metadata.workflow.WorkflowTask
 import com.netflix.conductor.common.run.Workflow
+import com.netflix.conductor.core.execution.StartWorkflowInput
+import com.netflix.conductor.core.execution.tasks.Join
 import com.netflix.conductor.core.execution.tasks.SubWorkflow
 import com.netflix.conductor.dao.QueueDAO
 import com.netflix.conductor.test.base.AbstractSpecification
@@ -30,6 +33,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
 
     @Autowired
     QueueDAO queueDAO
+
+    @Autowired
+    Join joinTask
 
     @Autowired
     SubWorkflow subWorkflowTask
@@ -44,9 +50,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
 
     def "Test dynamic fork join success flow"() {
         when: " a dynamic fork join workflow is started"
-        def workflowInstanceId = workflowExecutor.startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
                 'dynamic_fork_join_workflow', [:],
-                null, null, null)
+                null)
 
         then: "verify that the workflow has been successfully started and the first task is in scheduled state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -92,16 +98,23 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         }
 
         when: "Poll and complete 'integration_task_2' and 'integration_task_3'"
+        def joinTaskId = workflowExecutionService.getExecutionStatus(workflowInstanceId, true).getTaskByRefName("dynamicfanouttask_join").taskId
         def pollAndCompleteTask2Try = workflowTestUtil.pollAndCompleteTask('integration_task_2', 'task2.worker',
                 ['ok1': 'ov1'])
         def pollAndCompleteTask3Try = workflowTestUtil.pollAndCompleteTask('integration_task_3', 'task3.worker',
                 ['ok1': 'ov1'])
 
+        and: "workflow is evaluated by the reconciler"
+        sweep(workflowInstanceId)
+
         then: "verify that the tasks were polled and acknowledged"
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask2Try, ['k1': 'v1'])
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask3Try, ['k2': 'v2'])
 
-        and: "verify that the workflow has progressed and the 'integration_task_2' and 'integration_task_3' are complete"
+        when: "JOIN task is executed"
+        asyncSystemTaskExecutor.execute(joinTask, joinTaskId)
+
+        then: "verify that the workflow has progressed and the 'integration_task_2' and 'integration_task_3' are complete"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
             status == Workflow.WorkflowStatus.RUNNING
             tasks.size() == 6
@@ -144,9 +157,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         metadataService.updateTaskDef(modifiedTask2Definition)
 
         when: " a dynamic fork join workflow is started"
-        def workflowInstanceId = workflowExecutor.startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
                 'dynamic_fork_join_workflow', [:],
-                null, null, null)
+                null)
 
         then: "verify that the workflow has been successfully started and the first task is in scheduled state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -194,6 +207,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         when: "Poll and fail 'integration_task_2'"
         def pollAndCompleteTask2Try = workflowTestUtil.pollAndFailTask('integration_task_2', 'task2.worker', 'it is a failure..')
 
+        and: "workflow is evaluated by the reconciler"
+        sweep(workflowInstanceId)
+
         then: "verify that the tasks were polled and acknowledged"
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask2Try, ['k1': 'v1'])
 
@@ -225,9 +241,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         metadataService.updateTaskDef(modifiedTask2Definition)
 
         when: " a dynamic fork join workflow is started"
-        def workflowInstanceId = workflowExecutor.startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
                 'dynamic_fork_join_workflow', [:],
-                null, null, null)
+                null)
 
         then: "verify that the workflow has been successfully started and the first task is in scheduled state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -273,7 +289,11 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         }
 
         when: "Poll and fail 'integration_task_2'"
+        def joinTaskId = workflowExecutionService.getExecutionStatus(workflowInstanceId, true).getTaskByRefName("dynamicfanouttask_join").taskId
         def pollAndCompleteTask2Try1 = workflowTestUtil.pollAndFailTask('integration_task_2', 'task2.worker', 'it is a failure..')
+
+        and: "workflow is evaluated by the reconciler"
+        sweep(workflowInstanceId)
 
         then: "verify that the tasks were polled and acknowledged"
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask2Try1, ['k1': 'v1'])
@@ -319,11 +339,17 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         def pollAndCompleteTask3Try1 = workflowTestUtil.pollAndCompleteTask('integration_task_3', 'task3.worker',
                 ['ok1': 'ov1'])
 
+        and: "workflow is evaluated by the reconciler"
+        sweep(workflowInstanceId)
+
         then: "verify that the tasks were polled and acknowledged"
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask2Try2, ['k1': 'v1'])
         workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask3Try1, ['k2': 'v2'])
 
-        and: "verify that the workflow has progressed and the 'integration_task_2' and 'integration_task_3' are complete"
+        when: "JOIN task is polled and executed"
+        asyncSystemTaskExecutor.execute(joinTask, joinTaskId)
+
+        then: "verify that the workflow has progressed and the 'integration_task_2' and 'integration_task_3' are complete"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
             status == Workflow.WorkflowStatus.RUNNING
             tasks.size() == 8
@@ -368,8 +394,8 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         metadataService.updateTaskDef(modifiedTask2Definition)
 
         when: "the dynamic fork join workflow is started"
-        def workflowInstanceId = workflowExecutor.startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
-                'dynamic_fork_join_wf_subwf', [:], null, null, null)
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+                'dynamic_fork_join_wf_subwf', [:], null)
 
         then: "verify that the workflow is started and first task is in SCHEDULED state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -419,6 +445,7 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         }
 
         when: "the subworkflow is started by issuing a system task call"
+        def joinTaskId = workflowExecutionService.getExecutionStatus(workflowInstanceId, true).getTaskByRefName("dynamicfanouttask_join").taskId
         List<String> polledTaskIds = queueDAO.pop("SUB_WORKFLOW", 1, 200)
         String subworkflowTaskId = polledTaskIds.get(0)
         asyncSystemTaskExecutor.execute(subWorkflowTask, subworkflowTaskId)
@@ -624,6 +651,9 @@ class DynamicForkJoinSpec extends AbstractSpecification {
         when: "the workflow is evaluated"
         sweep(workflowInstanceId)
 
+        and: "JOIN task is executed"
+        asyncSystemTaskExecutor.execute(joinTask, joinTaskId)
+
         then: "the workflow has progressed beyond the join task"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
             status == Workflow.WorkflowStatus.RUNNING
@@ -672,5 +702,179 @@ class DynamicForkJoinSpec extends AbstractSpecification {
 
         cleanup: "roll back the change made to integration_task_2 definition"
         metadataService.updateTaskDef(persistedTask2Definition)
+    }
+
+    def "Test dynamic fork join empty output"() {
+        when: " a dynamic fork join workflow is started"
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+                'dynamic_fork_join_workflow', [:],
+                null)
+
+        then: "verify that the workflow has been successfully started and the first task is in scheduled state"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.SCHEDULED
+        }
+
+        when: " the first task is 'integration_task_1' output has a list of dynamic tasks"
+        WorkflowTask workflowTask2 = new WorkflowTask()
+        workflowTask2.name = 'integration_task_2'
+        workflowTask2.taskReferenceName = 'xdt1'
+
+        WorkflowTask workflowTask3 = new WorkflowTask()
+        workflowTask3.name = 'integration_task_3'
+        workflowTask3.taskReferenceName = 'xdt2'
+
+        def dynamicTasksInput = ['xdt1': ['k1': 'v1'], 'xdt2': ['k2': 'v2']]
+
+        and: "The 'integration_task_1' is polled and completed"
+        def pollAndCompleteTask1Try = workflowTestUtil.pollAndCompleteTask('integration_task_1', 'task1.worker',
+                ['dynamicTasks': [workflowTask2, workflowTask3], 'dynamicTasksInput': dynamicTasksInput])
+
+        then: "verify that the task was completed"
+        workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask1Try)
+
+        and: "verify that workflow has progressed further ahead and new dynamic tasks have been scheduled"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 5
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.COMPLETED
+            tasks[1].taskType == 'FORK'
+            tasks[1].status == Task.Status.COMPLETED
+            tasks[2].taskType == 'integration_task_2'
+            tasks[2].status == Task.Status.SCHEDULED
+            tasks[3].taskType == 'integration_task_3'
+            tasks[3].status == Task.Status.SCHEDULED
+            tasks[4].taskType == 'JOIN'
+            tasks[4].status == Task.Status.IN_PROGRESS
+            tasks[4].referenceTaskName == 'dynamicfanouttask_join'
+        }
+
+        when: "Poll and complete 'integration_task_2' and 'integration_task_3'"
+        def joinTaskId = workflowExecutionService.getExecutionStatus(workflowInstanceId, true).getTaskByRefName("dynamicfanouttask_join").taskId
+        def pollAndCompleteTask2Try = workflowTestUtil.pollAndCompleteTask('integration_task_2', 'task2.worker')
+        def pollAndCompleteTask3Try = workflowTestUtil.pollAndCompleteTask('integration_task_3', 'task3.worker')
+
+        and: "workflow is evaluated by the reconciler"
+        sweep(workflowInstanceId)
+
+        then: "verify that the tasks were polled and acknowledged"
+        workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask2Try, ['k1': 'v1'])
+        workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask3Try, ['k2': 'v2'])
+
+        when: "JOIN task is executed"
+        asyncSystemTaskExecutor.execute(joinTask, joinTaskId)
+
+        then: "verify that the workflow has progressed and the 'integration_task_2' and 'integration_task_3' are complete"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 6
+            tasks[2].taskType == 'integration_task_2'
+            tasks[2].status == Task.Status.COMPLETED
+            tasks[3].taskType == 'integration_task_3'
+            tasks[3].status == Task.Status.COMPLETED
+            tasks[4].taskType == 'JOIN'
+            tasks[4].inputData['joinOn'] == ['xdt1', 'xdt2']
+            tasks[4].status == Task.Status.COMPLETED
+            tasks[4].referenceTaskName == 'dynamicfanouttask_join'
+            tasks[4].outputData.isEmpty()
+            tasks[5].taskType == 'integration_task_4'
+            tasks[5].status == Task.Status.SCHEDULED
+        }
+
+        when: "Poll and complete 'integration_task_4'"
+        def pollAndCompleteTask4Try = workflowTestUtil.pollAndCompleteTask('integration_task_4', 'task4.worker')
+
+        then: "verify that the tasks were polled and acknowledged"
+        workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask4Try)
+
+        and: "verify that the workflow is complete"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.COMPLETED
+            tasks.size() == 6
+            tasks[5].taskType == 'integration_task_4'
+            tasks[5].status == Task.Status.COMPLETED
+        }
+    }
+
+    def "Test dynamic fork join fail when task input is invalid"() {
+        when: "a dynamic fork join workflow is started"
+        def workflowInstanceId = startWorkflow(DYNAMIC_FORK_JOIN_WF, 1,
+                'dynamic_fork_join_workflow', [:],
+                null)
+
+        then: "verify that the workflow has been successfully started and the first task is in scheduled state"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.SCHEDULED
+        }
+
+        when: " the first task is 'integration_task_1' output has a list of dynamic tasks"
+        WorkflowTask workflowTask2 = new WorkflowTask()
+        workflowTask2.name = 'integration_task_2'
+        workflowTask2.taskReferenceName = 'xdt1'
+
+        WorkflowTask workflowTask3 = new WorkflowTask()
+        workflowTask3.name = 'integration_task_3'
+        workflowTask3.taskReferenceName = 'xdt2'
+
+        def invalidDynamicTasksInput = ['xdt1': 'v1', 'xdt2': 'v2']
+
+        and: "The 'integration_task_1' is polled and completed"
+        def pollAndCompleteTask1Try = workflowTestUtil.pollAndCompleteTask('integration_task_1', 'task1.worker',
+                ['dynamicTasks': [workflowTask2, workflowTask3], 'dynamicTasksInput': invalidDynamicTasksInput])
+
+        then: "verify that the task was completed"
+        workflowTestUtil.verifyPolledAndAcknowledgedTask(pollAndCompleteTask1Try)
+
+        and: "verify that workflow failed"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.FAILED
+            tasks.size() == 1
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.COMPLETED
+        }
+    }
+
+    def "Test dynamic fork join return failed workflow when start with invalid input"() {
+        when: "a dynamic fork join workflow is started"
+        WorkflowTask workflowTask2 = new WorkflowTask()
+        workflowTask2.name = 'integration_task_2'
+        workflowTask2.taskReferenceName = 'xdt1'
+
+        WorkflowTask workflowTask3 = new WorkflowTask()
+        workflowTask3.name = 'integration_task_3'
+        workflowTask3.taskReferenceName = 'xdt2'
+
+        def invalidDynamicTasksInput = ['xdt1': 'v1', 'xdt2': 'v2']
+        def workflowInput = ['dynamicTasks': [workflowTask2, workflowTask3], 'dynamicTasksInput': invalidDynamicTasksInput]
+
+        def dynamicForkJoinTask = new WorkflowTask()
+        dynamicForkJoinTask.name = 'dynamicfanouttask'
+        dynamicForkJoinTask.taskReferenceName = 'dynamicfanouttask'
+        dynamicForkJoinTask.type = 'FORK_JOIN_DYNAMIC'
+        dynamicForkJoinTask.inputParameters = ['dynamicTasks': '${workflow.input.dynamicTasks}', 'dynamicTasksInput': '${workflow.input.dynamicTasksInput}']
+        dynamicForkJoinTask.dynamicForkTasksParam = 'dynamicTasks'
+        dynamicForkJoinTask.dynamicForkTasksInputParamName = 'dynamicTasksInput'
+
+        def workflowDef = new WorkflowDef()
+        workflowDef.name = 'DynamicForkJoinStartTest'
+        workflowDef.version = 1
+        workflowDef.tasks.add(dynamicForkJoinTask)
+        workflowDef.ownerEmail = 'test@harness.com'
+
+        def startWorkflowInput = new StartWorkflowInput(name: workflowDef.name, version: workflowDef.version, workflowInput: workflowInput, workflowDefinition: workflowDef)
+        def workflowInstanceId = startWorkflowOperation.execute(startWorkflowInput)
+
+        then: "verify that workflow failed"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.FAILED
+            tasks.isEmpty()
+        }
     }
 }

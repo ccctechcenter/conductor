@@ -16,6 +16,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import org.apache.commons.io.IOUtils;
 import org.junit.Before;
@@ -29,10 +30,13 @@ import com.netflix.conductor.common.config.TestObjectMapperConfiguration;
 import com.netflix.conductor.common.metadata.events.EventExecution;
 import com.netflix.conductor.common.run.SearchResult;
 import com.netflix.conductor.common.run.Workflow;
+import com.netflix.conductor.common.utils.ExternalPayloadStorage;
 import com.netflix.conductor.core.config.ConductorProperties;
+import com.netflix.conductor.core.exception.TerminateWorkflowException;
 import com.netflix.conductor.core.execution.TestDeciderService;
 import com.netflix.conductor.core.utils.ExternalPayloadStorageUtils;
 import com.netflix.conductor.dao.*;
+import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,6 +61,7 @@ public class ExecutionDAOFacadeTest {
         executionDAO = mock(ExecutionDAO.class);
         QueueDAO queueDAO = mock(QueueDAO.class);
         indexDAO = mock(IndexDAO.class);
+        externalPayloadStorageUtils = mock(ExternalPayloadStorageUtils.class);
         RateLimitingDAO rateLimitingDao = mock(RateLimitingDAO.class);
         ConcurrentExecutionLimitDAO concurrentExecutionLimitDAO =
                 mock(ConcurrentExecutionLimitDAO.class);
@@ -134,11 +139,21 @@ public class ExecutionDAOFacadeTest {
     @Test
     public void testRemoveWorkflow() {
         WorkflowModel workflow = new WorkflowModel();
+        workflow.setWorkflowId("workflowId");
         workflow.setStatus(WorkflowModel.Status.COMPLETED);
+
+        TaskModel task = new TaskModel();
+        task.setTaskId("taskId");
+        workflow.setTasks(Collections.singletonList(task));
+
         when(executionDAO.getWorkflow(anyString(), anyBoolean())).thenReturn(workflow);
         executionDAOFacade.removeWorkflow("workflowId", false);
-        verify(indexDAO, never()).updateWorkflow(any(), any(), any());
-        verify(indexDAO, times(1)).asyncRemoveWorkflow(workflow.getWorkflowId());
+        verify(executionDAO, times(1)).removeWorkflow(anyString());
+        verify(executionDAO, never()).removeTask(anyString());
+        verify(indexDAO, never()).updateWorkflow(anyString(), any(), any());
+        verify(indexDAO, never()).updateTask(anyString(), anyString(), any(), any());
+        verify(indexDAO, times(1)).asyncRemoveWorkflow(anyString());
+        verify(indexDAO, times(1)).asyncRemoveTask(anyString(), anyString());
     }
 
     @Test
@@ -148,8 +163,12 @@ public class ExecutionDAOFacadeTest {
 
         when(executionDAO.getWorkflow(anyString(), anyBoolean())).thenReturn(workflow);
         executionDAOFacade.removeWorkflow("workflowId", true);
-        verify(indexDAO, times(1)).updateWorkflow(any(), any(), any());
-        verify(indexDAO, never()).removeWorkflow(any());
+        verify(executionDAO, times(1)).removeWorkflow(anyString());
+        verify(executionDAO, never()).removeTask(anyString());
+        verify(indexDAO, times(1)).updateWorkflow(anyString(), any(), any());
+        verify(indexDAO, times(15)).updateTask(anyString(), anyString(), any(), any());
+        verify(indexDAO, never()).removeWorkflow(anyString());
+        verify(indexDAO, never()).removeTask(anyString(), anyString());
     }
 
     @Test
@@ -163,5 +182,20 @@ public class ExecutionDAOFacadeTest {
         added = executionDAOFacade.addEventExecution(new EventExecution());
         assertTrue(added);
         verify(indexDAO, times(1)).asyncAddEventExecution(any());
+    }
+
+    @Test(expected = TerminateWorkflowException.class)
+    public void testUpdateTaskThrowsTerminateWorkflowException() {
+        TaskModel task = new TaskModel();
+        task.setScheduledTime(1L);
+        task.setSeq(1);
+        task.setTaskId(UUID.randomUUID().toString());
+        task.setTaskDefName("task1");
+
+        doThrow(new TerminateWorkflowException("failed"))
+                .when(externalPayloadStorageUtils)
+                .verifyAndUpload(task, ExternalPayloadStorage.PayloadType.TASK_OUTPUT);
+
+        executionDAOFacade.updateTask(task);
     }
 }

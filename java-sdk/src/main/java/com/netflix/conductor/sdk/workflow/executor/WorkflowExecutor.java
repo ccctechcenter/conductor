@@ -50,17 +50,17 @@ public class WorkflowExecutor {
     private Map<String, CompletableFuture<Workflow>> runningWorkflowFutures =
             new ConcurrentHashMap<>();
 
-    private ObjectMapper objectMapper = new ObjectMapperProvider().getObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapperProvider().getObjectMapper();
 
-    private TaskClient taskClient;
+    private final TaskClient taskClient;
 
-    private WorkflowClient workflowClient;
+    private final WorkflowClient workflowClient;
 
-    private MetadataClient metadataClient;
+    private final MetadataClient metadataClient;
 
     private final AnnotatedWorkerExecutor annotatedWorkerExecutor;
 
-    private ScheduledExecutorService scheduledWorkflowMonitor =
+    private final ScheduledExecutorService scheduledWorkflowMonitor =
             Executors.newSingleThreadScheduledExecutor();
 
     static {
@@ -91,18 +91,17 @@ public class WorkflowExecutor {
 
     public WorkflowExecutor(
             String apiServerURL, int pollingInterval, ClientFilter... clientFilter) {
-        String conductorServerApiBase = apiServerURL;
 
         taskClient = new TaskClient(new DefaultClientConfig(), (ClientHandler) null, clientFilter);
-        taskClient.setRootURI(conductorServerApiBase);
+        taskClient.setRootURI(apiServerURL);
 
         workflowClient =
                 new WorkflowClient(new DefaultClientConfig(), (ClientHandler) null, clientFilter);
-        workflowClient.setRootURI(conductorServerApiBase);
+        workflowClient.setRootURI(apiServerURL);
 
         metadataClient =
                 new MetadataClient(new DefaultClientConfig(), (ClientHandler) null, clientFilter);
-        metadataClient.setRootURI(conductorServerApiBase);
+        metadataClient.setRootURI(apiServerURL);
 
         annotatedWorkerExecutor = new AnnotatedWorkerExecutor(taskClient, pollingInterval);
         scheduledWorkflowMonitor.scheduleAtFixedRate(

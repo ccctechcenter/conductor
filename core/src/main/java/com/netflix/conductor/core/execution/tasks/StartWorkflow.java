@@ -22,8 +22,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.netflix.conductor.common.metadata.workflow.StartWorkflowRequest;
-import com.netflix.conductor.core.exception.ApplicationException;
+import com.netflix.conductor.core.exception.TransientException;
+import com.netflix.conductor.core.execution.StartWorkflowInput;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
+import com.netflix.conductor.core.operation.StartWorkflowOperation;
 import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
 
@@ -43,11 +45,16 @@ public class StartWorkflow extends WorkflowSystemTask {
 
     private final ObjectMapper objectMapper;
     private final Validator validator;
+    private final StartWorkflowOperation startWorkflowOperation;
 
-    public StartWorkflow(ObjectMapper objectMapper, Validator validator) {
+    public StartWorkflow(
+            ObjectMapper objectMapper,
+            Validator validator,
+            StartWorkflowOperation startWorkflowOperation) {
         super(TASK_TYPE_START_WORKFLOW);
         this.objectMapper = objectMapper;
         this.validator = validator;
+        this.startWorkflowOperation = startWorkflowOperation;
     }
 
     @Override
@@ -64,33 +71,24 @@ public class StartWorkflow extends WorkflowSystemTask {
                         request.getCorrelationId(), workflow.getCorrelationId()));
 
         try {
-            String workflowId = startWorkflow(request, workflowExecutor);
+            String workflowId = startWorkflow(request, workflow.getWorkflowId());
             taskModel.addOutput(WORKFLOW_ID, workflowId);
             taskModel.setStatus(COMPLETED);
-        } catch (ApplicationException ae) {
-            if (ae.isRetryable()) {
-                LOGGER.info(
-                        "A transient backend error happened when task {} in {} tried to start workflow {}.",
-                        taskModel.getTaskId(),
-                        workflow.toShortString(),
-                        request.getName());
-            } else {
-                taskModel.setStatus(FAILED);
-                taskModel.setReasonForIncompletion(ae.getMessage());
-                LOGGER.error(
-                        "Error starting workflow: {} from workflow: {}",
-                        request.getName(),
-                        workflow.toShortString(),
-                        ae);
-            }
-        } catch (Exception e) {
+        } catch (TransientException te) {
+            LOGGER.info(
+                    "A transient backend error happened when task {} in {} tried to start workflow {}.",
+                    taskModel.getTaskId(),
+                    workflow.toShortString(),
+                    request.getName());
+        } catch (Exception ae) {
+
             taskModel.setStatus(FAILED);
-            taskModel.setReasonForIncompletion(e.getMessage());
+            taskModel.setReasonForIncompletion(ae.getMessage());
             LOGGER.error(
                     "Error starting workflow: {} from workflow: {}",
                     request.getName(),
                     workflow.toShortString(),
-                    e);
+                    ae);
         }
     }
 
@@ -138,27 +136,10 @@ public class StartWorkflow extends WorkflowSystemTask {
         return startWorkflowRequest;
     }
 
-    private String startWorkflow(StartWorkflowRequest request, WorkflowExecutor workflowExecutor) {
-        if (request.getWorkflowDef() == null) {
-            return workflowExecutor.startWorkflow(
-                    request.getName(),
-                    request.getVersion(),
-                    request.getCorrelationId(),
-                    request.getPriority(),
-                    request.getInput(),
-                    request.getExternalInputPayloadStoragePath(),
-                    null,
-                    request.getTaskToDomain());
-        } else {
-            return workflowExecutor.startWorkflow(
-                    request.getWorkflowDef(),
-                    request.getInput(),
-                    request.getExternalInputPayloadStoragePath(),
-                    request.getCorrelationId(),
-                    request.getPriority(),
-                    null,
-                    request.getTaskToDomain());
-        }
+    private String startWorkflow(StartWorkflowRequest request, String workflowId) {
+        StartWorkflowInput input = new StartWorkflowInput(request);
+        input.setTriggeringWorkflowId(workflowId);
+        return startWorkflowOperation.execute(input);
     }
 
     @Override

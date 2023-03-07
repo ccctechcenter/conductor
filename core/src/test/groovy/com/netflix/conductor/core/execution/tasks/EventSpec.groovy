@@ -16,7 +16,8 @@ import com.netflix.conductor.common.metadata.workflow.WorkflowDef
 import com.netflix.conductor.core.events.EventQueues
 import com.netflix.conductor.core.events.queue.Message
 import com.netflix.conductor.core.events.queue.ObservableQueue
-import com.netflix.conductor.core.exception.ApplicationException
+import com.netflix.conductor.core.exception.NonTransientException
+import com.netflix.conductor.core.exception.TransientException
 import com.netflix.conductor.core.utils.ParametersUtils
 import com.netflix.conductor.model.TaskModel
 import com.netflix.conductor.model.WorkflowModel
@@ -92,14 +93,19 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        verifyOutputData(task, queueName)
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': 'conductor']
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
         task.status == TaskModel.Status.COMPLETED
         verifyOutputData(task, queueName)
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': 'conductor']
         1 * eventQueues.getQueue(queueName) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
         1 * observableQueue.publish({ it.size() == 1 }) >> { it -> expectedMessage = it[0][0] as Message }
-
         verifyMessage(expectedMessage, task)
     }
 
@@ -117,14 +123,19 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        verifyOutputData(task, queueName)
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task,  null)
+
+        then:
         task.status == TaskModel.Status.COMPLETED
         verifyOutputData(task, queueName)
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
         1 * eventQueues.getQueue(queueName) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
         1 * observableQueue.publish({ it.size() == 1 }) >> { it -> expectedMessage = it[0][0] as Message }
-
         verifyMessage(expectedMessage, task)
     }
 
@@ -143,14 +154,19 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        verifyOutputData(task, queueName)
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
         task.status == TaskModel.Status.COMPLETED
         verifyOutputData(task, queueName)
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
         1 * eventQueues.getQueue(queueName) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
         1 * observableQueue.publish({ it.size() == 1 }) >> { it -> expectedMessage = it[0][0] as Message }
-
         verifyMessage(expectedMessage, task)
     }
 
@@ -167,12 +183,18 @@ class EventSpec extends Specification {
         then:
         task.status == TaskModel.Status.IN_PROGRESS
         verifyOutputData(task, queueName)
-
         1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': 'conductor']
+
+        when:
+        boolean isTaskUpdateRequired = event.execute(workflow, task, null)
+
+        then:
+        !isTaskUpdateRequired
+        task.status == TaskModel.Status.IN_PROGRESS
+        verifyOutputData(task, queueName)
         1 * eventQueues.getQueue(queueName) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
         1 * observableQueue.publish({ it.size() == 1 }) >> { args -> expectedMessage = args[0][0] as Message }
-
         verifyMessage(expectedMessage, task)
     }
 
@@ -188,7 +210,7 @@ class EventSpec extends Specification {
         then:
         task.status == TaskModel.Status.FAILED
         task.reasonForIncompletion != null
-
+        task.reasonForIncompletion.contains('Invalid / Unsupported sink specified:')
         1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
     }
 
@@ -205,14 +227,19 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
         task.status == TaskModel.Status.FAILED
         task.reasonForIncompletion != null
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
         1 * eventQueues.getQueue(queueName) >> {throw new IllegalArgumentException() }
     }
 
-    def "publishing to a queue throws a retryable ApplicationException"() {
+    def "publishing to a queue throws a TransientException"() {
         given:
         String sinkValue = 'conductor'
 
@@ -222,15 +249,20 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
-        task.status == TaskModel.Status.SCHEDULED
-
+        task.status == TaskModel.Status.IN_PROGRESS
         1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
+        task.status == TaskModel.Status.FAILED
         1 * eventQueues.getQueue(_) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
-        1 * observableQueue.publish(_) >> { throw new ApplicationException(ApplicationException.Code.BACKEND_ERROR, "transient error") }
+        1 * observableQueue.publish(_) >> { throw new TransientException("transient error") }
     }
 
-    def "publishing to a queue throws a non-retryable ApplicationException"() {
+    def "publishing to a queue throws a NonTransientException"() {
         given:
         String sinkValue = 'conductor'
 
@@ -238,15 +270,20 @@ class EventSpec extends Specification {
 
         when:
         event.start(workflow, task, null)
+
+        then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
 
         then:
         task.status == TaskModel.Status.FAILED
         task.reasonForIncompletion != null
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
         1 * eventQueues.getQueue(_) >> observableQueue
         // capture the Message object sent to the publish method. Event.start sends a list with one Message object
-        1 * observableQueue.publish(_) >> { throw new ApplicationException(ApplicationException.Code.INTERNAL_ERROR, "fatal error") }
+        1 * observableQueue.publish(_) >> { throw new NonTransientException("fatal error") }
     }
 
     def "event task fails to convert the payload to json"() {
@@ -259,9 +296,15 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
         task.status == TaskModel.Status.FAILED
         task.reasonForIncompletion != null
-
         1 * objectMapper.writeValueAsString(_ as Map) >> { throw new JsonParseException(null, "invalid json") }
     }
 
@@ -275,10 +318,15 @@ class EventSpec extends Specification {
         event.start(workflow, task, null)
 
         then:
+        task.status == TaskModel.Status.IN_PROGRESS
+        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
+
+        when:
+        event.execute(workflow, task, null)
+
+        then:
         task.status == TaskModel.Status.FAILED
         task.reasonForIncompletion != null
-
-        1 * parametersUtils.getTaskInputV2(_, workflow, task.taskId, _) >> ['sink': sinkValue]
         1 * eventQueues.getQueue(_) >> { throw new NullPointerException("some object is null") }
     }
 

@@ -37,10 +37,12 @@ export function useWorkflowSearch(searchObj) {
 }
 
 export function useWorkflow(workflowId) {
-  return useFetch(`/workflow/${workflowId}`, { enabled: !!workflowId });
+  return useFetch(["workflow", workflowId], `/workflow/${workflowId}`, {
+    enabled: !!workflowId,
+  });
 }
 
-export function useWorkflows(workflowIds, reactQueryOptions) {
+export function useWorkflowsByIds(workflowIds, reactQueryOptions) {
   return useFetchParallel(
     workflowIds.map((workflowId) => ["workflow", workflowId]),
     reactQueryOptions
@@ -69,17 +71,25 @@ export function useWorkflowDef(
   reactQueryOptions = {}
 ) {
   let path;
+  const key = ["workflowDef", workflowName];
   if (workflowName) {
     path = `/metadata/workflow/${workflowName}`;
-    if (version) path += `?version=${version}`;
+    if (version) {
+      path += `?version=${version}`;
+      key.push(version);
+    }
   }
-  return useFetch(path, reactQueryOptions, defaultWorkflow);
+  return useFetch(key, path, reactQueryOptions, defaultWorkflow);
 }
 
 export function useWorkflowDefs() {
-  const { data, ...rest } = useFetch("/metadata/workflow", {
+  return useFetch(["workflowDefs"], "/metadata/workflow", {
     staleTime: STALE_TIME_WORKFLOW_DEFS,
   });
+}
+
+export function useLatestWorkflowDefs() {
+  const { data, ...rest } = useWorkflowDefs();
 
   // Filter latest versions only
   const workflows = useMemo(() => {
@@ -97,7 +107,6 @@ export function useWorkflowDefs() {
     }
   }, [data]);
 
-  console.log(workflows);
   return {
     data: workflows,
     ...rest,
@@ -123,15 +132,21 @@ export function useSaveWorkflow(callbacks) {
 
 export function useWorkflowNames() {
   const { data } = useWorkflowDefs();
-  return useMemo(() => (data ? data.map((def) => def.name) : []), [data]);
+  // Extract unique names
+  return useMemo(() => {
+    if (data) {
+      const nameSet = new Set(data.map((def) => def.name));
+      return Array.from(nameSet);
+    } else {
+      return [];
+    }
+  }, [data]);
 }
 
 // Version numbers do not necessarily start, or run contiguously from 1. Could be arbitrary integers e.g. 52335678.
 // By convention they should be monotonic (ever increasing) wrt time.
 export function useWorkflowNamesAndVersions() {
-  const { data, ...rest } = useFetch("/metadata/workflow", {
-    staleTime: STALE_TIME_WORKFLOW_DEFS,
-  });
+  const { data, ...rest } = useWorkflowDefs();
 
   const newData = useMemo(() => {
     const retval = new Map();

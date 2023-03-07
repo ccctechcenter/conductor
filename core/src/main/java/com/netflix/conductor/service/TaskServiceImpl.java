@@ -33,8 +33,7 @@ import com.netflix.conductor.common.metadata.tasks.TaskResult;
 import com.netflix.conductor.common.run.ExternalStorageLocation;
 import com.netflix.conductor.common.run.SearchResult;
 import com.netflix.conductor.common.run.TaskSummary;
-import com.netflix.conductor.common.utils.ExternalPayloadStorage;
-import com.netflix.conductor.common.utils.RetryUtil;
+import com.netflix.conductor.core.utils.QueueUtils;
 import com.netflix.conductor.dao.QueueDAO;
 import com.netflix.conductor.metrics.Monitors;
 
@@ -160,22 +159,9 @@ public class TaskServiceImpl implements TaskService {
      */
     public boolean ackTaskReceived(String taskId) {
         LOGGER.debug("Ack received for task: {}", taskId);
-        String ackTaskDesc = "Ack Task with taskId: " + taskId;
-        String ackTaskOperation = "ackTaskReceived";
         AtomicBoolean ackResult = new AtomicBoolean(false);
         try {
-            new RetryUtil<>()
-                    .retryOnException(
-                            () -> {
-                                ackResult.set(executionService.ackTaskReceived(taskId));
-                                return null;
-                            },
-                            null,
-                            null,
-                            3,
-                            ackTaskDesc,
-                            ackTaskOperation);
-
+            ackResult.set(executionService.ackTaskReceived(taskId));
         } catch (Exception e) {
             // Fail the task and let decide reevaluate the workflow, thereby preventing workflow
             // being stuck from transient ack errors.
@@ -266,6 +252,19 @@ public class TaskServiceImpl implements TaskService {
      */
     public Map<String, Integer> getTaskQueueSizes(List<String> taskTypes) {
         return executionService.getTaskQueueSizes(taskTypes);
+    }
+
+    @Override
+    public Integer getTaskQueueSize(
+            String taskType, String domain, String isolationGroupId, String executionNamespace) {
+        String queueName =
+                QueueUtils.getQueueName(
+                        taskType,
+                        StringUtils.trimToNull(domain),
+                        StringUtils.trimToNull(isolationGroupId),
+                        StringUtils.trimToNull(executionNamespace));
+
+        return executionService.getTaskQueueSize(queueName);
     }
 
     /**
@@ -365,22 +364,6 @@ public class TaskServiceImpl implements TaskService {
      */
     public ExternalStorageLocation getExternalStorageLocation(
             String path, String operation, String type) {
-        try {
-            ExternalPayloadStorage.Operation payloadOperation =
-                    ExternalPayloadStorage.Operation.valueOf(StringUtils.upperCase(operation));
-            ExternalPayloadStorage.PayloadType payloadType =
-                    ExternalPayloadStorage.PayloadType.valueOf(StringUtils.upperCase(type));
-            return executionService.getExternalStorageLocation(payloadOperation, payloadType, path);
-        } catch (Exception e) {
-            // FIXME: for backwards compatibility
-            LOGGER.error(
-                    "Invalid input - Operation: {}, PayloadType: {}, defaulting to WRITE/TASK_OUTPUT",
-                    operation,
-                    type);
-            return executionService.getExternalStorageLocation(
-                    ExternalPayloadStorage.Operation.WRITE,
-                    ExternalPayloadStorage.PayloadType.TASK_OUTPUT,
-                    path);
-        }
+        return executionService.getExternalStorageLocation(path, operation, type);
     }
 }

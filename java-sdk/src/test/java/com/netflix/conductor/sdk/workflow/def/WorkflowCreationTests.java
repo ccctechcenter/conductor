@@ -47,7 +47,7 @@ public class WorkflowCreationTests {
 
     @BeforeAll
     public static void init() throws IOException {
-        runner = new WorkflowTestRunner(8080, "3.5.3");
+        runner = new WorkflowTestRunner(8080, "3.7.3");
         runner.init("com.netflix.conductor.sdk");
         executor = runner.getWorkflowExecutor();
     }
@@ -162,6 +162,7 @@ public class WorkflowCreationTests {
                     run.getStatus(),
                     run.getReasonForIncompletion());
         } catch (Exception e) {
+            e.printStackTrace();
             fail(e.getMessage());
         }
     }
@@ -182,6 +183,7 @@ public class WorkflowCreationTests {
         try {
             execution.get(10, TimeUnit.SECONDS);
         } catch (Exception e) {
+            e.printStackTrace();
             fail(e.getMessage());
         }
     }

@@ -168,6 +168,10 @@ public class Monitors {
         gauge(classQualifier, name, count);
     }
 
+    public static void recordCounter(String name, long count, String... additionalTags) {
+        getCounter(classQualifier, name, additionalTags).increment(count);
+    }
+
     public static void recordQueueWaitTime(String taskType, long queueWaitTime) {
         getTimer(classQualifier, "task_queue_wait", "taskType", taskType)
                 .record(queueWaitTime, TimeUnit.MILLISECONDS);
@@ -185,6 +189,10 @@ public class Monitors {
                         "status",
                         status.name())
                 .record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    public static void recordWorkflowDecisionTime(long duration) {
+        getTimer(classQualifier, "workflow_decision").record(duration, TimeUnit.MILLISECONDS);
     }
 
     public static void recordTaskPollError(String taskType, String exception) {
@@ -238,16 +246,13 @@ public class Monitors {
                 StringUtils.defaultIfBlank(ownerApp, "unknown"));
     }
 
-    public static void recordRunningWorkflows(
-            long count, String name, String version, String ownerApp) {
+    public static void recordRunningWorkflows(long count, String name, String ownerApp) {
         gauge(
                 classQualifier,
                 "workflow_running",
                 count,
                 "workflowName",
                 name,
-                "version",
-                version,
                 "ownerApp",
                 StringUtils.defaultIfBlank(ownerApp, "unknown"));
     }
@@ -354,6 +359,16 @@ public class Monitors {
                 taskType);
     }
 
+    public static void recordTaskExtendLeaseError(String taskType, String workflowType) {
+        counter(
+                classQualifier,
+                "task_extendLease_error",
+                "workflowName",
+                workflowType,
+                "taskType",
+                taskType);
+    }
+
     public static void recordTaskQueueOpError(String taskType, String workflowType) {
         counter(
                 classQualifier,
@@ -373,6 +388,11 @@ public class Monitors {
                         workflowType,
                         "ownerApp",
                         StringUtils.defaultIfBlank(ownerApp, "unknown"))
+                .record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    public static void recordUnackTime(String workflowType, long duration) {
+        getTimer(classQualifier, "workflow_unack", "workflowName", workflowType)
                 .record(duration, TimeUnit.MILLISECONDS);
     }
 
@@ -564,5 +584,9 @@ public class Monitors {
 
     public static void recordQueueMessageRepushFromRepairService(String queueName) {
         counter(classQualifier, "queue_message_repushed", "queueName", queueName);
+    }
+
+    public static void recordTaskExecLogSize(int val) {
+        gauge(classQualifier, "task_exec_log_size", val);
     }
 }

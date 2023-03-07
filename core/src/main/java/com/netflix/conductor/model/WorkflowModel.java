@@ -20,10 +20,11 @@ import org.springframework.beans.BeanUtils;
 
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
 import com.netflix.conductor.common.run.Workflow;
+import com.netflix.conductor.core.utils.Utils;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Preconditions;
 
 public class WorkflowModel {
 
@@ -74,7 +75,11 @@ public class WorkflowModel {
 
     private Map<String, String> taskToDomain = new HashMap<>();
 
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     private Set<String> failedReferenceTaskNames = new HashSet<>();
+
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    private Set<String> failedTaskNames = new HashSet<>();
 
     private WorkflowDef workflowDefinition;
 
@@ -173,7 +178,15 @@ public class WorkflowModel {
 
     @JsonIgnore
     public Map<String, Object> getInput() {
-        return externalInputPayloadStoragePath != null ? inputPayload : input;
+        if (!inputPayload.isEmpty() && !input.isEmpty()) {
+            input.putAll(inputPayload);
+            inputPayload = new HashMap<>();
+            return input;
+        } else if (inputPayload.isEmpty()) {
+            return input;
+        } else {
+            return inputPayload;
+        }
     }
 
     @JsonIgnore
@@ -186,7 +199,15 @@ public class WorkflowModel {
 
     @JsonIgnore
     public Map<String, Object> getOutput() {
-        return externalOutputPayloadStoragePath != null ? outputPayload : output;
+        if (!outputPayload.isEmpty() && !output.isEmpty()) {
+            output.putAll(outputPayload);
+            outputPayload = new HashMap<>();
+            return output;
+        } else if (outputPayload.isEmpty()) {
+            return output;
+        } else {
+            return outputPayload;
+        }
     }
 
     @JsonIgnore
@@ -279,6 +300,14 @@ public class WorkflowModel {
 
     public void setFailedReferenceTaskNames(Set<String> failedReferenceTaskNames) {
         this.failedReferenceTaskNames = failedReferenceTaskNames;
+    }
+
+    public Set<String> getFailedTaskNames() {
+        return failedTaskNames;
+    }
+
+    public void setFailedTaskNames(Set<String> failedTaskNames) {
+        this.failedTaskNames = failedTaskNames;
     }
 
     public WorkflowDef getWorkflowDefinition() {
@@ -386,7 +415,7 @@ public class WorkflowModel {
      * @return the workflow definition name.
      */
     public String getWorkflowName() {
-        Preconditions.checkNotNull(workflowDefinition, "Workflow definition is null");
+        Utils.checkNotNull(workflowDefinition, "Workflow definition is null");
         return workflowDefinition.getName();
     }
 
@@ -396,7 +425,7 @@ public class WorkflowModel {
      * @return the workflow definition version.
      */
     public int getWorkflowVersion() {
-        Preconditions.checkNotNull(workflowDefinition, "Workflow definition is null");
+        Utils.checkNotNull(workflowDefinition, "Workflow definition is null");
         return workflowDefinition.getVersion();
     }
 
@@ -482,13 +511,15 @@ public class WorkflowModel {
                 && Objects.equals(getParentWorkflowTaskId(), that.getParentWorkflowTaskId())
                 && Objects.equals(getTasks(), that.getTasks())
                 && Objects.equals(getInput(), that.getInput())
-                && Objects.equals(getOutput(), that.getOutput())
+                && Objects.equals(output, that.output)
+                && Objects.equals(outputPayload, that.outputPayload)
                 && Objects.equals(getCorrelationId(), that.getCorrelationId())
                 && Objects.equals(getReRunFromWorkflowId(), that.getReRunFromWorkflowId())
                 && Objects.equals(getReasonForIncompletion(), that.getReasonForIncompletion())
                 && Objects.equals(getEvent(), that.getEvent())
                 && Objects.equals(getTaskToDomain(), that.getTaskToDomain())
                 && Objects.equals(getFailedReferenceTaskNames(), that.getFailedReferenceTaskNames())
+                && Objects.equals(getFailedTaskNames(), that.getFailedTaskNames())
                 && Objects.equals(getWorkflowDefinition(), that.getWorkflowDefinition())
                 && Objects.equals(
                         getExternalInputPayloadStoragePath(),
@@ -514,13 +545,15 @@ public class WorkflowModel {
                 getParentWorkflowTaskId(),
                 getTasks(),
                 getInput(),
-                getOutput(),
+                output,
+                outputPayload,
                 getCorrelationId(),
                 getReRunFromWorkflowId(),
                 getReasonForIncompletion(),
                 getEvent(),
                 getTaskToDomain(),
                 getFailedReferenceTaskNames(),
+                getFailedTaskNames(),
                 getWorkflowDefinition(),
                 getExternalInputPayloadStoragePath(),
                 getExternalOutputPayloadStoragePath(),
@@ -539,6 +572,7 @@ public class WorkflowModel {
         BeanUtils.copyProperties(this, workflow);
         workflow.setStatus(Workflow.WorkflowStatus.valueOf(this.status.name()));
         workflow.setTasks(tasks.stream().map(TaskModel::toTask).collect(Collectors.toList()));
+        workflow.setUpdateTime(this.updatedTime);
 
         // ensure that input/output is properly represented
         if (externalInputPayloadStoragePath != null) {
@@ -548,5 +582,25 @@ public class WorkflowModel {
             workflow.setOutput(new HashMap<>());
         }
         return workflow;
+    }
+
+    public void addInput(String key, Object value) {
+        this.input.put(key, value);
+    }
+
+    public void addInput(Map<String, Object> inputData) {
+        if (inputData != null) {
+            this.input.putAll(inputData);
+        }
+    }
+
+    public void addOutput(String key, Object value) {
+        this.output.put(key, value);
+    }
+
+    public void addOutput(Map<String, Object> outputData) {
+        if (outputData != null) {
+            this.output.putAll(outputData);
+        }
     }
 }

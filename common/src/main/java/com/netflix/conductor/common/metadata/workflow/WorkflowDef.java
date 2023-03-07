@@ -32,12 +32,12 @@ import com.netflix.conductor.annotations.protogen.ProtoMessage;
 import com.netflix.conductor.common.constraints.NoSemiColonConstraint;
 import com.netflix.conductor.common.constraints.OwnerEmailMandatoryConstraint;
 import com.netflix.conductor.common.constraints.TaskReferenceNameUniqueConstraint;
-import com.netflix.conductor.common.metadata.Auditable;
+import com.netflix.conductor.common.metadata.BaseDef;
 import com.netflix.conductor.common.metadata.tasks.TaskType;
 
 @ProtoMessage
 @TaskReferenceNameUniqueConstraint
-public class WorkflowDef extends Auditable {
+public class WorkflowDef extends BaseDef {
 
     @ProtoEnum
     public enum TimeoutPolicy {
@@ -76,7 +76,7 @@ public class WorkflowDef extends Auditable {
     @Max(value = 2, message = "workflowDef schemaVersion: {value} is only supported")
     private int schemaVersion = 2;
 
-    // By default a workflow is restartable
+    // By default, a workflow is restartable
     @ProtoField(id = 9)
     private boolean restartable = true;
 

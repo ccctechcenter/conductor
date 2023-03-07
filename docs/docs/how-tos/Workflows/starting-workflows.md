@@ -1,12 +1,8 @@
----
-sidebar_position: 1
----
-
-# Starting Workflow Executions
+# Starting Workflows
 
 Workflow executions can be started by using the following API:
 
-```http request
+```http
 POST /api/workflow/{name}
 ```
 
@@ -20,7 +16,7 @@ Refer to the SDK documentation to configure a client in your selected language t
 
 ### Example using curl
 
-```shell
+```bash
 curl 'https://localhost:8080/api/workflow/sample_workflow' \
   -H 'accept: text/plain' \
   -H 'content-type: application/json' \

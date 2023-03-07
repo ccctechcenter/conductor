@@ -20,10 +20,10 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.function.Function;
 
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.UriBuilder;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,24 +39,18 @@ import com.netflix.conductor.common.validation.ErrorResponse;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider;
-import com.google.common.base.Preconditions;
-import com.sun.jersey.api.client.Client;
-import com.sun.jersey.api.client.ClientHandler;
 import com.sun.jersey.api.client.ClientHandlerException;
 import com.sun.jersey.api.client.ClientResponse;
 import com.sun.jersey.api.client.GenericType;
 import com.sun.jersey.api.client.UniformInterfaceException;
 import com.sun.jersey.api.client.WebResource.Builder;
-import com.sun.jersey.api.client.config.ClientConfig;
-import com.sun.jersey.api.client.config.DefaultClientConfig;
 
-/** Abstract client for the REST template */
+/** Abstract client for the REST server */
 public abstract class ClientBase {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClientBase.class);
 
-    protected final Client client;
+    protected ClientRequestHandler requestHandler;
 
     protected String root = "";
 
@@ -66,45 +60,20 @@ public abstract class ClientBase {
 
     protected ConductorClientConfiguration conductorClientConfiguration;
 
-    protected ClientBase() {
-        this(new DefaultClientConfig(), new DefaultConductorClientConfiguration(), null);
-    }
-
-    protected ClientBase(ClientConfig config) {
-        this(config, new DefaultConductorClientConfiguration(), null);
-    }
-
-    protected ClientBase(ClientConfig config, ClientHandler handler) {
-        this(config, new DefaultConductorClientConfiguration(), handler);
-    }
-
     protected ClientBase(
-            ClientConfig config,
-            ConductorClientConfiguration clientConfiguration,
-            ClientHandler handler) {
-        objectMapper = new ObjectMapperProvider().getObjectMapper();
+            ClientRequestHandler requestHandler, ConductorClientConfiguration clientConfiguration) {
+        this.objectMapper = new ObjectMapperProvider().getObjectMapper();
 
         // https://github.com/FasterXML/jackson-databind/issues/2683
         if (isNewerJacksonVersion()) {
             objectMapper.registerModule(new JavaTimeModule());
         }
 
-        JacksonJsonProvider provider = new JacksonJsonProvider(objectMapper);
-        config.getSingletons().add(provider);
-
-        if (handler == null) {
-            this.client = Client.create(config);
-        } else {
-            this.client = new Client(handler, config);
-        }
-
-        conductorClientConfiguration = clientConfiguration;
-        payloadStorage = new PayloadStorage(this);
-    }
-
-    private boolean isNewerJacksonVersion() {
-        Version version = com.fasterxml.jackson.databind.cfg.PackageVersion.VERSION;
-        return version.getMajorVersion() == 2 && version.getMinorVersion() >= 12;
+        this.requestHandler = requestHandler;
+        this.conductorClientConfiguration =
+                ObjectUtils.defaultIfNull(
+                        clientConfiguration, new DefaultConductorClientConfiguration());
+        this.payloadStorage = new PayloadStorage(this);
     }
 
     public void setRootURI(String root) {
@@ -127,29 +96,23 @@ public abstract class ClientBase {
     private BulkResponse delete(
             Object[] queryParams, String url, Object[] uriVariables, Object body) {
         URI uri = null;
+        BulkResponse response = null;
         try {
             uri = getURIBuilder(root + url, queryParams).build(uriVariables);
-            if (body != null) {
-                return client.resource(uri)
-                        .type(MediaType.APPLICATION_JSON_TYPE)
-                        .delete(BulkResponse.class, body);
-            } else {
-                client.resource(uri).delete();
-            }
+            response = requestHandler.delete(uri, body);
         } catch (UniformInterfaceException e) {
             handleUniformInterfaceException(e, uri);
         } catch (RuntimeException e) {
             handleRuntimeException(e, uri);
         }
-
-        return null;
+        return response;
     }
 
     protected void put(String url, Object[] queryParams, Object request, Object... uriVariables) {
         URI uri = null;
         try {
             uri = getURIBuilder(root + url, queryParams).build(uriVariables);
-            getWebResourceBuilder(uri, request).put();
+            requestHandler.getWebResourceBuilder(uri, request).put();
         } catch (RuntimeException e) {
             handleException(uri, e);
         }
@@ -205,7 +168,7 @@ public abstract class ClientBase {
         URI uri = null;
         try {
             uri = getURIBuilder(root + url, queryParams).build(uriVariables);
-            Builder webResourceBuilder = getWebResourceBuilder(uri, request);
+            Builder webResourceBuilder = requestHandler.getWebResourceBuilder(uri, request);
             if (responseType == null) {
                 webResourceBuilder.post();
                 return null;
@@ -240,10 +203,7 @@ public abstract class ClientBase {
         ClientResponse clientResponse;
         try {
             uri = getURIBuilder(root + url, queryParams).build(uriVariables);
-            clientResponse =
-                    client.resource(uri)
-                            .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN)
-                            .get(ClientResponse.class);
+            clientResponse = requestHandler.get(uri);
             if (clientResponse.getStatus() < 300) {
                 return entityProvider.apply(clientResponse);
             } else {
@@ -259,7 +219,7 @@ public abstract class ClientBase {
 
     /**
      * Uses the {@link PayloadStorage} for storing large payloads. Gets the uri for storing the
-     * payload from the server and then uploads to this location.
+     * payload from the server and then uploads to this location
      *
      * @param payloadType the {@link
      *     com.netflix.conductor.common.utils.ExternalPayloadStorage.PayloadType} to be uploaded
@@ -269,7 +229,7 @@ public abstract class ClientBase {
      */
     protected String uploadToExternalPayloadStorage(
             ExternalPayloadStorage.PayloadType payloadType, byte[] payloadBytes, long payloadSize) {
-        Preconditions.checkArgument(
+        Validate.isTrue(
                 payloadType.equals(ExternalPayloadStorage.PayloadType.WORKFLOW_INPUT)
                         || payloadType.equals(ExternalPayloadStorage.PayloadType.TASK_OUTPUT),
                 "Payload type must be workflow input or task output");
@@ -294,7 +254,7 @@ public abstract class ClientBase {
     @SuppressWarnings("unchecked")
     protected Map<String, Object> downloadFromExternalStorage(
             ExternalPayloadStorage.PayloadType payloadType, String path) {
-        Preconditions.checkArgument(StringUtils.isNotBlank(path), "uri cannot be blank");
+        Validate.notBlank(path, "uri cannot be blank");
         ExternalStorageLocation externalStorageLocation =
                 payloadStorage.getLocation(
                         ExternalPayloadStorage.Operation.READ, payloadType, path);
@@ -309,11 +269,31 @@ public abstract class ClientBase {
         }
     }
 
-    private Builder getWebResourceBuilder(URI URI, Object entity) {
-        return client.resource(URI)
-                .type(MediaType.APPLICATION_JSON)
-                .entity(entity)
-                .accept(MediaType.TEXT_PLAIN, MediaType.APPLICATION_JSON);
+    private UriBuilder getURIBuilder(String path, Object[] queryParams) {
+        if (path == null) {
+            path = "";
+        }
+        UriBuilder builder = UriBuilder.fromPath(path);
+        if (queryParams != null) {
+            for (int i = 0; i < queryParams.length; i += 2) {
+                String param = queryParams[i].toString();
+                Object value = queryParams[i + 1];
+                if (value != null) {
+                    if (value instanceof Collection) {
+                        Object[] values = ((Collection<?>) value).toArray();
+                        builder.queryParam(param, values);
+                    } else {
+                        builder.queryParam(param, value);
+                    }
+                }
+            }
+        }
+        return builder;
+    }
+
+    protected boolean isNewerJacksonVersion() {
+        Version version = com.fasterxml.jackson.databind.cfg.PackageVersion.VERSION;
+        return version.getMajorVersion() == 2 && version.getMinorVersion() >= 12;
     }
 
     private void handleClientHandlerException(ClientHandlerException exception, URI uri) {
@@ -403,27 +383,5 @@ public abstract class ClientBase {
         builder.append(", response headers: ").append(response.getHeaders());
         builder.append("]");
         return builder.toString();
-    }
-
-    private UriBuilder getURIBuilder(String path, Object[] queryParams) {
-        if (path == null) {
-            path = "";
-        }
-        UriBuilder builder = UriBuilder.fromPath(path);
-        if (queryParams != null) {
-            for (int i = 0; i < queryParams.length; i += 2) {
-                String param = queryParams[i].toString();
-                Object value = queryParams[i + 1];
-                if (value != null) {
-                    if (value instanceof Collection) {
-                        Object[] values = ((Collection<?>) value).toArray();
-                        builder.queryParam(param, values);
-                    } else {
-                        builder.queryParam(param, value);
-                    }
-                }
-            }
-        }
-        return builder;
     }
 }

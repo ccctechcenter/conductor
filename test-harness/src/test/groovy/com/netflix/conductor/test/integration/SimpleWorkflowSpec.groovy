@@ -22,13 +22,13 @@ import com.netflix.conductor.common.metadata.tasks.TaskType
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef
 import com.netflix.conductor.common.metadata.workflow.WorkflowTask
 import com.netflix.conductor.common.run.Workflow
-import com.netflix.conductor.core.exception.ApplicationException
+import com.netflix.conductor.core.exception.ConflictException
+import com.netflix.conductor.core.exception.NotFoundException
 import com.netflix.conductor.dao.QueueDAO
 import com.netflix.conductor.test.base.AbstractSpecification
 
 import spock.lang.Shared
 
-import static com.netflix.conductor.core.exception.ApplicationException.Code.CONFLICT
 import static com.netflix.conductor.test.util.WorkflowTestUtil.verifyPolledAndAcknowledgedTask
 
 class SimpleWorkflowSpec extends AbstractSpecification {
@@ -62,9 +62,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         input['param2'] = 'p2 value'
 
         when: "Start a workflow based on the registered simple workflow"
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, input,
-                null, null, null)
+                null)
 
         then: "verify that the workflow is in a running state"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -120,9 +120,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         input.put("param1", "p1 value")
         input.put("param2", null)
 
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, input,
-                null, null, null)
+                null)
 
         then: "verify the workflow has started and the input params have propagated"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -174,9 +174,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         input.put("param1", "p1 value")
         input.put("param2", "p2 value")
 
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, input,
-                null, null, null)
+                null)
 
         then: "verify that the workflow has started"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -188,8 +188,8 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowExecutor.restart(workflowInstanceId, false)
 
         then: "Ensure that a exception is thrown when a running workflow is being rewind"
-        def exceptionThrown = thrown(ApplicationException)
-        exceptionThrown.code == CONFLICT
+        def exceptionThrown = thrown(ConflictException.class)
+        exceptionThrown != null
 
         when: "'integration_task_1' is polled and failed with terminal error"
         def polledIntegrationTask1 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
@@ -215,6 +215,7 @@ class SimpleWorkflowSpec extends AbstractSpecification {
             output['validationErrors'] == 'There was a terminal error'
             getTaskByRefName('t1').retryCount == 0
             failedReferenceTaskNames == ['t1'] as HashSet
+            failedTaskNames == ['integration_task_1'] as HashSet
         }
 
         cleanup:
@@ -232,8 +233,8 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param2'] = 'p2 value'
 
         when: "Start a workflow that has a response time out"
-        def workflowInstanceId = workflowExecutor.startWorkflow('RTOWF', 1, correlationId, workflowInput,
-                null, null, null)
+        def workflowInstanceId = startWorkflow('RTOWF', 1, correlationId, workflowInput,
+                null)
 
 
         then: "Workflow is in running state and the task 'task_rt' is ready to be polled"
@@ -247,13 +248,11 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         when: "Poll for a 'task_rt' task and then ack the task"
         def polledTaskRtTry1 = workflowExecutionService.poll('task_rt', 'task1.integration.worker.testTimeout')
-        def received = workflowExecutionService.ackTaskReceived(polledTaskRtTry1.taskId)
 
         then: "Verify that the 'task_rt' was polled"
         polledTaskRtTry1
         polledTaskRtTry1.taskType == 'task_rt'
         polledTaskRtTry1.workflowInstanceId == workflowInstanceId
-        received
         polledTaskRtTry1.status == Task.Status.IN_PROGRESS
 
         when: "An additional poll is done wto retrieved another 'task_rt'"
@@ -377,9 +376,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param1'] = inputParam1
         workflowInput['param2'] = 'p2 value'
 
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "A workflow instance has started"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -455,9 +454,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param1'] = inputParam1
         workflowInput['param2'] = 'p2 value'
 
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "A workflow instance has started"
         with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
@@ -545,9 +544,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         def workflowInput = new HashMap()
         workflowInput['param1'] = 'p1 value'
         workflowInput['param2'] = 'p2 value'
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "verify that the workflow has started"
         workflowInstanceId
@@ -556,14 +555,12 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         when: "Poll for the first task and complete the task"
         def polledIntegrationTask1 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
-        def ackPolledIntegrationTask1 = workflowExecutionService.ackTaskReceived(polledIntegrationTask1.taskId)
         polledIntegrationTask1.status = Task.Status.COMPLETED
         def polledIntegrationTask1Output = "task1.output -> " + polledIntegrationTask1.inputData['p1'] + "." + polledIntegrationTask1.inputData['p2']
         polledIntegrationTask1.outputData['op'] = polledIntegrationTask1Output
         workflowExecutionService.updateTask(new TaskResult(polledIntegrationTask1))
 
         then: "verify that the 'integration_task_1' is polled and completed"
-        ackPolledIntegrationTask1
         with(polledIntegrationTask1) {
             inputData.containsKey('p1')
             inputData.containsKey('p2')
@@ -603,6 +600,7 @@ class SimpleWorkflowSpec extends AbstractSpecification {
             tasks[1].taskId == tasks[2].retriedTaskId
             tasks[2].taskId == tasks[3].retriedTaskId
             failedReferenceTaskNames == ['t2'] as HashSet
+            failedTaskNames == ['integration_task_2'] as HashSet
         }
 
         cleanup:
@@ -626,9 +624,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param2'] = 'p2 value'
 
         and: "start a simple workflow with input params"
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "verify that the workflow has started and the next task is scheduled"
         workflowInstanceId
@@ -704,6 +702,7 @@ class SimpleWorkflowSpec extends AbstractSpecification {
             tasks[2].status == Task.Status.COMPLETED
             tasks[3].status == Task.Status.COMPLETED
             failedReferenceTaskNames == ['t1'] as HashSet
+            failedTaskNames == ['integration_task_1'] as HashSet
         }
 
         cleanup:
@@ -718,9 +717,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param2'] = 'p2 value'
 
         when: "start a new workflow with the input"
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "verify that the workflow is in running state and the task queue has an entry for the first task of the workflow"
         workflowInstanceId
@@ -731,7 +730,6 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         when: "the first task 'integration_task_1' is polled and then sent back with a callBack seconds"
         def pollTaskTry1 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
-        def ackReceivedTaskTry1 = workflowExecutionService.ackTaskReceived(pollTaskTry1)
         pollTaskTry1.outputData['op'] = 'task1.in.progress'
         pollTaskTry1.callbackAfterSeconds = 5
         pollTaskTry1.status = Task.Status.IN_PROGRESS
@@ -739,7 +737,6 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         then: "verify that the task is polled and acknowledged"
         pollTaskTry1
-        ackReceivedTaskTry1
 
         and: "the input data of the data is as expected"
         pollTaskTry1.inputData.containsKey('p1')
@@ -798,9 +795,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param2'] = 'p2 value'
 
         when: "start a new workflow with the input"
-        def workflowInstanceId = workflowExecutor.startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         then: "verify that the workflow is in running state and the task queue has an entry for the first task of the workflow"
         workflowInstanceId
@@ -813,7 +810,6 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         when: "the first task 'integration_task_1' is polled and then sent back with a callBack seconds"
         def pollTaskTry1 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
-        def ackReceivedTaskTry1 = workflowExecutionService.ackTaskReceived(pollTaskTry1)
         pollTaskTry1.outputData['op'] = 'task1.in.progress'
         pollTaskTry1.callbackAfterSeconds = 3600
         pollTaskTry1.status = Task.Status.IN_PROGRESS
@@ -821,7 +817,6 @@ class SimpleWorkflowSpec extends AbstractSpecification {
 
         then: "verify that the task is polled and acknowledged"
         pollTaskTry1
-        ackReceivedTaskTry1
 
         and: "the input data of the data is as expected"
         pollTaskTry1.inputData.containsKey('p1')
@@ -898,9 +893,9 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowInput['param1'] = 'p1 value'
         workflowInput['param2'] = 'p2 value'
 
-        def workflowInstanceId = workflowExecutor.startWorkflow(INTEGRATION_TEST_WF_NON_RESTARTABLE, 1,
+        def workflowInstanceId = startWorkflow(INTEGRATION_TEST_WF_NON_RESTARTABLE, 1,
                 correlationId, workflowInput,
-                null, null, null)
+                null)
 
         and: "the 'integration_task_1' is polled and failed"
         Tuple polledAndFailedTaskTry1 = workflowTestUtil.pollAndFailTask('integration_task_1',
@@ -950,13 +945,90 @@ class SimpleWorkflowSpec extends AbstractSpecification {
         workflowExecutor.restart(workflowInstanceId, false)
 
         then: "Ensure that an exception is thrown"
-        def exceptionThrown = thrown(ApplicationException)
-        exceptionThrown
+        thrown(NotFoundException.class)
 
         cleanup: "clean up the changes made to the task and workflow definition during start up"
         metadataService.updateTaskDef(integrationTask1Definition)
         simpleWorkflowDefinition.name = LINEAR_WORKFLOW_T1_T2
         simpleWorkflowDefinition.restartable = true
         metadataService.updateWorkflowDef(simpleWorkflowDefinition)
+    }
+
+    def "Test simple workflow when update task's result with call back after seconds"() {
+
+        given: "A new simple workflow is started"
+        def correlationId = 'integration_test_1'
+        def workflowInput = new HashMap()
+        workflowInput['param1'] = 'p1 value'
+        workflowInput['param2'] = 'p2 value'
+
+        when: "start a new workflow with the input"
+        def workflowInstanceId = startWorkflow(LINEAR_WORKFLOW_T1_T2, 1,
+                correlationId, workflowInput,
+                null)
+
+        then: "verify that the workflow is in running state and the task queue has an entry for the first task of the workflow"
+        workflowInstanceId
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].status == Task.Status.SCHEDULED
+        }
+        workflowExecutionService.getTaskQueueSizes(['integration_task_1']).get('integration_task_1') == 1
+
+        when: "the first task 'integration_task_1' is polled and then sent back with no callBack seconds"
+        def pollTaskTry1 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
+        pollTaskTry1.outputData['op'] = 'task1.in.progress'
+        pollTaskTry1.status = Task.Status.IN_PROGRESS
+        workflowExecutionService.updateTask(new TaskResult(pollTaskTry1))
+
+        then: "verify that the task is polled and acknowledged"
+        pollTaskTry1
+
+        and: "the input data of the data is as expected"
+        pollTaskTry1.inputData.containsKey('p1')
+        pollTaskTry1.inputData['p1'] == 'p1 value'
+        pollTaskTry1.inputData.containsKey('p2')
+        pollTaskTry1.inputData['p1'] == 'p1 value'
+
+        and: "the task gets put back into the queue of 'integration_task_1' immediately for future poll"
+        workflowExecutionService.getTaskQueueSizes(['integration_task_1']).get('integration_task_1') == 1
+
+        and: "The task in in SCHEDULED status with workerId reset"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.SCHEDULED
+            tasks[0].callbackAfterSeconds == 0
+        }
+
+        when: "the 'integration_task_1' task is polled again"
+        def pollTaskTry2 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
+        pollTaskTry2.outputData['op'] = 'task1.in.progress'
+        pollTaskTry2.status = Task.Status.IN_PROGRESS
+        pollTaskTry2.callbackAfterSeconds = 3600
+        workflowExecutionService.updateTask(new TaskResult(pollTaskTry2))
+
+        then: "verify that the task is polled and acknowledged"
+        pollTaskTry2
+
+        and: "the task gets put back into the queue of 'integration_task_1' with callbackAfterSeconds delay for future poll"
+        workflowExecutionService.getTaskQueueSizes(['integration_task_1']).get('integration_task_1') == 1
+
+        and: "The task in in SCHEDULED status with workerId reset"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].taskType == 'integration_task_1'
+            tasks[0].status == Task.Status.SCHEDULED
+            tasks[0].callbackAfterSeconds == pollTaskTry2.callbackAfterSeconds
+        }
+
+        when: "the 'integration_task_1' task is polled again"
+        def pollTaskTry3 = workflowExecutionService.poll('integration_task_1', 'task1.integration.worker')
+
+        then: "verify that there was no task polled"
+        !pollTaskTry3
     }
 }

@@ -18,9 +18,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -30,13 +30,12 @@ import com.netflix.conductor.client.worker.Worker;
 import com.netflix.conductor.common.metadata.tasks.Task;
 import com.netflix.conductor.common.metadata.tasks.TaskResult;
 
-import com.google.common.util.concurrent.Uninterruptibles;
-
 import static com.netflix.conductor.common.metadata.tasks.TaskResult.Status.COMPLETED;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -44,6 +43,13 @@ import static org.mockito.Mockito.when;
 public class TaskRunnerConfigurerTest {
 
     private static final String TEST_TASK_DEF_NAME = "test";
+
+    private TaskClient client;
+
+    @Before
+    public void setup() {
+        client = Mockito.mock(TaskClient.class);
+    }
 
     @Test(expected = NullPointerException.class)
     public void testNoWorkersException() {
@@ -57,21 +63,27 @@ public class TaskRunnerConfigurerTest {
         Map<String, Integer> taskThreadCount = new HashMap<>();
         taskThreadCount.put(worker1.getTaskDefName(), 2);
         taskThreadCount.put(worker2.getTaskDefName(), 3);
-        new TaskRunnerConfigurer.Builder(new TaskClient(), Arrays.asList(worker1, worker2))
+        new TaskRunnerConfigurer.Builder(client, Arrays.asList(worker1, worker2))
                 .withThreadCount(10)
                 .withTaskThreadCount(taskThreadCount)
                 .build();
     }
 
-    @Test(expected = ConductorClientException.class)
+    @Test
     public void testMissingTaskThreadConfig() {
         Worker worker1 = Worker.create("task1", TaskResult::new);
         Worker worker2 = Worker.create("task2", TaskResult::new);
         Map<String, Integer> taskThreadCount = new HashMap<>();
         taskThreadCount.put(worker1.getTaskDefName(), 2);
-        new TaskRunnerConfigurer.Builder(new TaskClient(), Arrays.asList(worker1, worker2))
-                .withTaskThreadCount(taskThreadCount)
-                .build();
+        TaskRunnerConfigurer configurer =
+                new TaskRunnerConfigurer.Builder(client, Arrays.asList(worker1, worker2))
+                        .withTaskThreadCount(taskThreadCount)
+                        .build();
+
+        assertFalse(configurer.getTaskThreadCount().isEmpty());
+        assertEquals(2, configurer.getTaskThreadCount().size());
+        assertEquals(2, configurer.getTaskThreadCount().get("task1").intValue());
+        assertEquals(1, configurer.getTaskThreadCount().get("task2").intValue());
     }
 
     @Test
@@ -82,7 +94,7 @@ public class TaskRunnerConfigurerTest {
         taskThreadCount.put(worker1.getTaskDefName(), 2);
         taskThreadCount.put(worker2.getTaskDefName(), 3);
         TaskRunnerConfigurer configurer =
-                new TaskRunnerConfigurer.Builder(new TaskClient(), Arrays.asList(worker1, worker2))
+                new TaskRunnerConfigurer.Builder(client, Arrays.asList(worker1, worker2))
                         .withTaskThreadCount(taskThreadCount)
                         .build();
         configurer.init();
@@ -95,19 +107,19 @@ public class TaskRunnerConfigurerTest {
     public void testSharedThreadPool() {
         Worker worker = Worker.create(TEST_TASK_DEF_NAME, TaskResult::new);
         TaskRunnerConfigurer configurer =
-                new TaskRunnerConfigurer.Builder(
-                                new TaskClient(), Arrays.asList(worker, worker, worker))
+                new TaskRunnerConfigurer.Builder(client, Arrays.asList(worker, worker, worker))
                         .build();
         configurer.init();
         assertEquals(3, configurer.getThreadCount());
         assertEquals(500, configurer.getSleepWhenRetry());
         assertEquals(3, configurer.getUpdateRetryCount());
         assertEquals(10, configurer.getShutdownGracePeriodSeconds());
-        assertTrue(configurer.getTaskThreadCount().isEmpty());
+        assertFalse(configurer.getTaskThreadCount().isEmpty());
+        assertEquals(1, configurer.getTaskThreadCount().size());
+        assertEquals(3, configurer.getTaskThreadCount().get(TEST_TASK_DEF_NAME).intValue());
 
         configurer =
-                new TaskRunnerConfigurer.Builder(
-                                new TaskClient(), Collections.singletonList(worker))
+                new TaskRunnerConfigurer.Builder(client, Collections.singletonList(worker))
                         .withThreadCount(100)
                         .withSleepWhenRetry(100)
                         .withUpdateRetryCount(10)
@@ -121,11 +133,13 @@ public class TaskRunnerConfigurerTest {
         assertEquals(10, configurer.getUpdateRetryCount());
         assertEquals(15, configurer.getShutdownGracePeriodSeconds());
         assertEquals("test-worker-", configurer.getWorkerNamePrefix());
-        assertTrue(configurer.getTaskThreadCount().isEmpty());
+        assertFalse(configurer.getTaskThreadCount().isEmpty());
+        assertEquals(1, configurer.getTaskThreadCount().size());
+        assertEquals(100, configurer.getTaskThreadCount().get(TEST_TASK_DEF_NAME).intValue());
     }
 
     @Test
-    public void testMultipleWorkersExecution() {
+    public void testMultipleWorkersExecution() throws Exception {
         String task1Name = "task1";
         Worker worker1 = mock(Worker.class);
         when(worker1.getPollingInterval()).thenReturn(3000);
@@ -135,7 +149,7 @@ public class TaskRunnerConfigurerTest {
                 .thenAnswer(
                         invocation -> {
                             // Sleep for 2 seconds to simulate task execution
-                            Uninterruptibles.sleepUninterruptibly(2, TimeUnit.SECONDS);
+                            Thread.sleep(2000);
                             TaskResult taskResult = new TaskResult();
                             taskResult.setStatus(COMPLETED);
                             return taskResult;
@@ -150,7 +164,7 @@ public class TaskRunnerConfigurerTest {
                 .thenAnswer(
                         invocation -> {
                             // Sleep for 2 seconds to simulate task execution
-                            Uninterruptibles.sleepUninterruptibly(2, TimeUnit.SECONDS);
+                            Thread.sleep(2000);
                             TaskResult taskResult = new TaskResult();
                             taskResult.setStatus(COMPLETED);
                             return taskResult;
@@ -166,17 +180,17 @@ public class TaskRunnerConfigurerTest {
                         .withUpdateRetryCount(1)
                         .withWorkerNamePrefix("test-worker-")
                         .build();
-        when(taskClient.pollTask(any(), any(), any()))
+        when(taskClient.batchPollTasksInDomain(any(), any(), any(), anyInt(), anyInt()))
                 .thenAnswer(
                         invocation -> {
                             Object[] args = invocation.getArguments();
                             String taskName = args[0].toString();
                             if (taskName.equals(task1Name)) {
-                                return task1;
+                                return Arrays.asList(task1);
                             } else if (taskName.equals(task2Name)) {
-                                return task2;
+                                return Arrays.asList(task2);
                             } else {
-                                return null;
+                                return Collections.emptyList();
                             }
                         });
         when(taskClient.ack(any(), any())).thenReturn(true);
@@ -200,7 +214,7 @@ public class TaskRunnerConfigurerTest {
                 .when(taskClient)
                 .updateTask(any());
         configurer.init();
-        Uninterruptibles.awaitUninterruptibly(latch);
+        latch.await();
 
         assertEquals(1, task1Counter.get());
         assertEquals(1, task2Counter.get());
